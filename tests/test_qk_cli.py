@@ -183,25 +183,30 @@ class QkCliTests(unittest.TestCase):
     def test_doctor_reports_the_locked_qk_or_why_it_is_refused(self):
         lock = self.write_lock()
         env = dict(os.environ, QK_HARNESS_STATE_DIR=str(self.state))
-        ok = subprocess.run([sys.executable, "-m", "harness", "doctor", "--lock", str(lock)], cwd=str(ROOT),
+        ok = subprocess.run([sys.executable, "-m", "harness", "--lock", str(lock), "doctor"], cwd=str(ROOT),
                             capture_output=True, text=True, env=env)
         self.assertEqual(ok.returncode, 0, ok.stderr)
         self.assertEqual(json.loads(ok.stdout)["qk"], "9.9.9")
-        refused = subprocess.run([sys.executable, "-m", "harness", "doctor", "--lock", str(lock)], cwd=str(ROOT),
+        after = subprocess.run([sys.executable, "-m", "harness", "doctor", "--lock", str(lock)], cwd=str(ROOT),
+                               capture_output=True, text=True, env=env)
+        self.assertEqual(after.returncode, 0, after.stderr)  # --lock also works after the command
+        refused = subprocess.run([sys.executable, "-m", "harness", "--lock", str(lock), "doctor"], cwd=str(ROOT),
                                  capture_output=True, text=True, env=dict(env, FAKE_QK_CONTRACT="2"))
         self.assertEqual((refused.returncode, refused.stdout), (2, ""))
         self.assertIn("reports contract 2", refused.stderr)
 
 
 class BoundaryTests(unittest.TestCase):
-    def test_only_qk_cli_runs_processes_or_names_the_qk_script(self):
+    def test_only_qk_cli_runs_qk_and_only_gitops_runs_other_processes(self):
         for path in sorted((ROOT / "harness").glob("*.py")):
             if path.name == "qk_cli.py":
                 continue
             with self.subTest(path=path.name):
                 text = path.read_text()
-                # No process calls, and no import of qk's own modules (qk, qk_run, qk_ledger, ...).
-                self.assertIsNone(re.search(r"\bsubprocess\b|scripts/qk\.py|\bimport (qk|qk_(?!cli\b)\w+)\b", text))
+                # Nothing else names qk's script or imports qk's own modules (qk, qk_run, qk_ledger, ...).
+                self.assertIsNone(re.search(r"scripts/qk\.py|\bimport (qk|qk_(?!cli\b)\w+)\b", text))
+                if path.name != "gitops.py":  # git, gh and the plan's checks run from gitops only
+                    self.assertIsNone(re.search(r"\bsubprocess\b", text))
 
 
 if __name__ == "__main__":

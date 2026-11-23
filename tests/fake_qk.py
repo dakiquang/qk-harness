@@ -47,6 +47,20 @@ if command == "agent run":
         fail()
     status = "done" if scenario == "done" else "blocked"
     spec = argv[argv.index("--spec") + 1]
+    if os.environ.get("FAKE_QK_AGENT"):  # a scripted agent acts in --cwd and replies like a real one
+        import re, subprocess
+        cwd = argv[argv.index("--cwd") + 1]
+        mode = "write" if "--write" in argv else "read"
+        proc = subprocess.run([sys.executable, os.environ["FAKE_QK_AGENT"], cwd, mode, spec], input=stdin,
+                              cwd=cwd, capture_output=True, text=True)
+        text = proc.stdout
+        blocks = re.findall(r"```qk-result\s*\n(.*?)\n```", text, re.S)
+        result = json.loads(blocks[-1]) if blocks else None
+        status = result["status"] if result else "blocked"
+        reply({"contract": 1, "status": status, "reason": "" if status == "done" else (proc.stderr or "no block"),
+               "family": "openai" if spec.startswith("codex") else "anthropic", "spec": spec, "result": result,
+               "text": text, "usage": {"input": 1, "cached": 0, "output": 1}, "lessons": [], "events": None,
+               "seconds": 0}, 0 if status == "done" else 2)
     reply({"contract": 1, "status": status, "reason": "" if status == "done" else "fake reason",
            "family": "openai" if spec.startswith("codex") else "anthropic", "spec": spec,
            "result": {"status": status, "summary": "fake", "files": [], "evidence": [], "reason": "",
