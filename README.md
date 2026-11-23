@@ -22,7 +22,7 @@ A plan lays out the work in a ```` ```qk-harness ```` block: `contract` names th
 
 1. `plan.write`, then a person runs `approve <job> plan`.
 2. `contract.write` writes tests that define done and commits them on `qk/<slug>`; `contract.review` has a model from another family review them; a failed review gets one `contract.write --fix` round from the review's findings, then a person decides; `verify.run <job> integration --expect-red` must see them fail before any build. A test that asks for behaviour the plan does not state counts as an important finding.
-3. `build.run <job> <task>` builds each task on its own branch `qk/<slug>--<task>`. A worker that commits, switches branch or changes a path it does not own is refused. `verify.run` and `review.run` check each task; a task gets at most one `--fix` round.
+3. `build.run <job> <task>` builds each task on its own branch `qk/<slug>--<task>`; `run` builds and reviews up to two tasks at once (`start --sequential` for one at a time), each turn in its own qk process, while checks still run one at a time. A task may name its own `impl` and `review` in the plan; every reviewer must come from another model family than the implementer it checks, and this is checked before any worker runs. A worker that commits, switches branch or changes a path it does not own is refused. `verify.run` and `review.run` check each task; a task gets at most one `--fix` round.
 4. `integrate.run` merges into `qk/<slug>` exactly the task commits that were checked and reviewed; a task branch that moved, or a conflict, stops the job. The integrated branch is checked and reviewed again.
 5. `pr.open` pushes `qk/<slug>` and opens one pull request. Nothing merges it.
 

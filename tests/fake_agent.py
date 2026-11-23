@@ -38,6 +38,8 @@ if "`create` mode" in prompt:
              {"name": "cli", "owns": ["src/api/" if "overlap" in flags else "src/cli/"],
               "verify": ["python3 -c \"from src.cli import name; assert name() == 'cli'\""]}]
     verify = "" if "no-verify" in flags else "```qk-verify\npython3 -m unittest discover -s tests\n```\n"
+    for task in tasks:  # per-task roles, e.g. FAKE_PLAN_ROLES='{"api": {"impl": "codex:alt"}}'
+        task.update(json.loads(__import__("os").environ.get("FAKE_PLAN_ROLES", "{}")).get(task["name"], {}))
     layout = {"contract": ["tests/"], "tasks": tasks}
     if "no separate test-writing step" in prompt:  # without a contract, each task owns its own tests
         layout = {"tasks": tasks}
@@ -66,6 +68,15 @@ if prompt.startswith("Write the contract"):
     done("contract written")
 if "build task `" in prompt:
     task = re.search(r"build task `([a-z-]+)`", prompt).group(1)
+    barrier = __import__("os").environ.get("FAKE_BARRIER")
+    if barrier:  # record whether another build was running at the same time
+        import time
+        Path(barrier, f"{task}.started").write_text("")
+        deadline = time.time() + float(__import__("os").environ.get("FAKE_BARRIER_WAIT", "10"))
+        while len(list(Path(barrier).glob("*.started"))) < 2 and time.time() < deadline:
+            time.sleep(0.05)
+        Path(barrier, f"{task}.together").write_text(str(len(list(Path(barrier).glob("*.started"))) >= 2))
+        __import__("atexit").register(Path(barrier, f"{task}.started").unlink)  # gone once this build ends
     package = cwd / "src" / task
     package.mkdir(parents=True, exist_ok=True)
     value = {"api": "'hello'", "cli": "'cli'"}[task]

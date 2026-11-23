@@ -34,6 +34,7 @@ def parser():
     start.add_argument("--impl", default=DEFAULT_IMPL, help="runtime:model that writes")
     start.add_argument("--review", default=DEFAULT_REVIEW, help="runtime:model that reviews; another family")
     start.add_argument("--no-contract", action="store_true", help="skip writing and checking a contract first")
+    start.add_argument("--sequential", action="store_true", help="run task turns one at a time (default: 2 at once)")
     run = commands.add_parser("run", aliases=["resume"], help="run each next step until a gate, a block or the end")
     run.add_argument("job")
     abort = commands.add_parser("abort", help="stop a job for good; branches and worktrees stay for inspection")
@@ -91,7 +92,7 @@ def main(argv=None):
                                                "reviewer must come from another one")
                 base = args.base or gitops.git(args.repo, "symbolic-ref", "--short", "HEAD")
                 job = state.new_job(args.repo, args.task, args.size, base, args.impl, args.review,
-                                    contract=not args.no_contract)
+                                    contract=not args.no_contract, parallel=1 if args.sequential else 2)
                 reply = dict(summary(job), status="done")
             elif args.command == "eval":
                 if capabilities.family(qk, args.impl) == capabilities.family(qk, args.review):

@@ -5,8 +5,11 @@ branches live under the job: the integration branch `qk/<slug>` and one branch p
 (git cannot hold both `qk/<slug>` and `qk/<slug>/<task>`).
 """
 
+import copy
 import hashlib
 import json
+import os
+import secrets
 from pathlib import Path, PurePosixPath
 import re
 import time
@@ -42,7 +45,7 @@ def turn(qk, job, spec, cwd, prompt, *, write, add_dirs=()):
     """One agent turn through qk; its result block, or Blocked with qk's reason."""
     turns = state.job_dir(job["id"]) / "turns"
     turns.mkdir(exist_ok=True)
-    stem = turns / f"{len(list(turns.glob('*.events.jsonl'))) + 1:03d}"
+    stem = turns / f"{time.strftime('%H%M%S')}-{secrets.token_hex(3)}"  # unique even when turns run at once
     # Only the shared directory (plan, diffs) is added: the job directory also holds every worktree, and a
     # worker given it could write into another task's worktree, where no ownership check looks.
     reply = qk.agent_run(spec, cwd, prompt, write=write, add_dirs=[shared(job), *add_dirs],
@@ -126,7 +129,11 @@ def parse_plan(text, contract_stage=True):
         verify = task.get("verify")
         if not isinstance(verify, list) or not verify or not all(isinstance(c, str) and c.strip() for c in verify):
             raise Blocked(f"task {name} must list the commands that check it on its own in \"verify\"")
+        roles = {role: task.get(role) for role in ("impl", "review") if task.get(role) is not None}
+        if not all(isinstance(spec, str) and ":" in spec for spec in roles.values()):
+            raise Blocked(f"task {name}: impl and review must be runtime:model specs")
         seen[name], checks[name] = owns, [command.strip() for command in verify]
+        checks[name + "\0roles"] = roles
     overlaps = [(a, b) for a in seen for b in seen if a < b
                 and any(owns_overlap(x, y) for x in seen[a] for y in seen[b])]
     if overlaps:
@@ -134,8 +141,8 @@ def parse_plan(text, contract_stage=True):
     shared_paths = [name for name in seen if any(owns_overlap(x, y) for x in seen[name] for y in contract)]
     if shared_paths:
         raise Blocked("the contract paths overlap tasks: " + ", ".join(shared_paths))
-    return plan, commands, contract, [{"name": name, "owns": owns, "verify": checks[name]}
-                                      for name, owns in seen.items()]
+    return plan, commands, contract, [dict({"name": name, "owns": owns, "verify": checks[name]},
+                                           **checks[name + "\0roles"]) for name, owns in seen.items()]
 
 
 def owns_overlap(a, b):
@@ -177,13 +184,23 @@ lowercase words.
 {NO_GIT}"""
     result, text = turn(qk, job, job["impl"], repo, prompt, write=False)
     plan, commands, contract, tasks = parse_plan(text, policy.contract_on(job))
+    for task in tasks:  # roles are checked before any worker runs
+        task.setdefault("impl", job["impl"])
+        task.setdefault("review", job["review"])
+        if family(qk, task["impl"]) == family(qk, task["review"]):
+            raise Blocked(f"task {task['name']}: reviewer {task['review']} is the same model family as "
+                          f"its implementer {task['impl']}")
+    authors = {family(qk, task["impl"]) for task in tasks}
+    if family(qk, job["review"]) in authors:
+        raise Blocked(f"the integration reviewer {job['review']} is the same model family as a task implementer")
     path = shared(job) / "plan.md"
     path.write_text(plan, encoding="utf-8")
     job["plan"] = {"file": str(path), "sha256": hashlib.sha256(plan.encode("utf-8")).hexdigest(),
                    "verify": commands, "contract": contract, "tasks": tasks}
     job["tasks"] = {task["name"]: {"owns": task["owns"], "branch": f"qk/{job['slug']}--{task['name']}",
                                    "worktree": str(state.job_dir(job["id"]) / "tasks" / task["name"]),
-                                   "checks": task["verify"],
+                                   "checks": task["verify"], "impl_spec": task["impl"],
+                                   "review_spec": task["review"],
                                    "commit": None, "verify": None, "review": None, "fix_rounds": 0}
                     for task in tasks}
     job["approvals"] = {}
@@ -308,7 +325,7 @@ def build_run(job, qk, name, fix=False):
 {contract_rule}
 If the task needs a change outside your paths, stop and report "blocked" with the reason.
 {problems}{NO_GIT}"""
-    result, _ = turn(qk, job, job["impl"], worktree, prompt, write=True)
+    result, _ = turn(qk, job, task.get("impl_spec", job["impl"]), worktree, prompt, write=True)
     if gitops.git(worktree, "rev-parse", "HEAD") != head or \
             gitops.git(worktree, "symbolic-ref", "-q", "HEAD") != f"refs/heads/{task['branch']}":
         raise Blocked(f"the worker moved {worktree} (commit or branch); only the harness commits. Inspect it")
@@ -355,12 +372,15 @@ def verify_run(job, qk, target, expect_red=False):
 
 def review_run(job, qk, target):
     if target == "integration":
-        worktree, base, author = Path(job["integration"]["worktree"]), job["base_sha"], job["impl"]
+        worktree, base, reviewer = Path(job["integration"]["worktree"]), job["base_sha"], job["review"]
+        authors = sorted({task.get("impl_spec", job["impl"]) for task in job["tasks"].values()})
     else:
         task = job["tasks"][target]
-        worktree, base, author = Path(task["worktree"]), build_base(job), job["impl"]
-    if family(qk, job["review"]) == family(qk, author):
-        raise Blocked(f"the reviewer {job['review']} is the same model family as the implementer {author}")
+        worktree, base = Path(task["worktree"]), build_base(job)
+        reviewer, authors = task.get("review_spec", job["review"]), [task.get("impl_spec", job["impl"])]
+    for author in authors:
+        if family(qk, reviewer) == family(qk, author):
+            raise Blocked(f"the reviewer {reviewer} is the same model family as the implementer {author}")
     head = gitops.git(worktree, "rev-parse", "HEAD")
     diff = shared(job) / f"review-{target}.diff"
     diff.write_text(gitops.git(worktree, "diff", f"{base}..HEAD"), encoding="utf-8")
@@ -373,10 +393,10 @@ check or test the plan requires; nit = style, wording, or a minor gap.
 Report only verified problems introduced by this diff. Put them in "findings" as {{"severity":
 "blocker|important|nit", "class": "...", "file": "<repo-relative path>", "line": N, "claim": "...", "fix": "..."}}.
 Use status "done" when the review itself completed, even if there are findings."""
-    result, _ = turn(qk, job, job["review"], worktree, prompt, write=False)
+    result, _ = turn(qk, job, reviewer, worktree, prompt, write=False)
     if gitops.git(worktree, "rev-parse", "HEAD") != head or not gitops.is_clean(worktree):
         raise Blocked(f"the read-only review changed {worktree}")
-    review = {"spec": job["review"], "status": result["status"], "findings": list(result.get("findings") or []),
+    review = {"spec": reviewer, "status": result["status"], "findings": list(result.get("findings") or []),
               "commit": head}
     if target == "integration":
         job["integration"]["review"] = review
@@ -432,8 +452,44 @@ ACTIONS = {"plan.write": plan_write, "contract.write": contract_write, "contract
            "integrate.run": integrate_run, "pr.open": pr_open}
 
 
+UNLOCKED = ("build.run", "review.run")  # on one task: the agent turn runs without holding the job lock
+
+
+def run_unlocked(job_id, capability, qk, target, fix):
+    """A task's build or review: checked and marked running under the lock, run on a copy without it, then
+    merged back under the lock, so tasks of one job can build at the same time."""
+    with state.locked(job_id) as job:
+        try:
+            policy.check(job, capability, target, fix=fix)
+        except policy.Refused as refused:
+            record(job, capability, "refused", str(refused))
+            return {"status": "refused", "capability": capability, "reason": str(refused), "next": policy.next_step(job)}
+        job["tasks"][target]["running"] = {"capability": capability, "since": now(), "pid": os.getpid()}
+        work = copy.deepcopy(job)
+    seen = len(work.get("usage", []))
+    status, reason, details = "done", "", {}
+    try:
+        details = build_run(work, qk, target, fix=fix) if capability == "build.run" else review_run(work, qk, target)
+    except (Blocked, gitops.GitError) as error:
+        status, reason = "blocked", str(error)
+    finally:
+        with state.locked(job_id) as job:
+            work["tasks"][target].pop("running", None)
+            job["tasks"][target] = work["tasks"][target]
+            job.setdefault("usage", []).extend(work.get("usage", [])[seen:])
+            record(job, capability, status, reason)
+            step = policy.next_step(job)
+    return dict(details, status=status, capability=capability, reason=reason, next=step, task=target)
+
+
 def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
-    """Check, act, record, and report {status, reason, next, ...}. The job lock is held throughout."""
+    """Check, act, record, and report {status, reason, next, ...}. The job lock is held throughout, except for
+    a task's build or review, which runs on a copy so that several tasks can run at once."""
+    if capability in UNLOCKED and target not in (None, "integration"):
+        with state.locked(job_id) as job:
+            known = target in job["tasks"]
+        if known:
+            return run_unlocked(job_id, capability, qk, target, fix)
     with state.locked(job_id) as job:
         try:
             policy.check(job, capability, target, expect_red=expect_red, fix=fix)

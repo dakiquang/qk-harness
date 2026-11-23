@@ -112,18 +112,9 @@ def next_step(job):
     elif not gate_open(job, "contract"):
         return f"approve {job_id} contract"
     for name, task in job["tasks"].items():
-        if task["commit"] is None:
-            return f"build.run {job_id} {name}"
-        if task["verify"] is None:
-            return f"verify.run {job_id} {name}"
-        if not green(task["verify"]):
-            return f"build.run {job_id} {name} --fix" if fixable(task) else \
-                f"a person decides: task {name} still fails its checks after the fix round"
-        if task["review"] is None:
-            return f"review.run {job_id} {name}"
-        if not review_ok(task["review"]):
-            return f"build.run {job_id} {name} --fix" if fixable(task) else \
-                f"a person decides: task {name} still has serious review findings after the fix round"
+        step = task_step(job_id, name, task)
+        if step:
+            return step
     if not gate_open(job, "build"):
         return f"approve {job_id} build"
     integration = job["integration"]
@@ -144,6 +135,36 @@ def next_step(job):
     if job["pr_url"] is None:
         return f"pr.open {job_id}"
     return f"done: a person reviews and merges {job['pr_url']}"
+
+
+def task_step(job_id, name, task):
+    """What one task needs next, or None when it is built, checked and reviewed."""
+    if task.get("running"):
+        return f"wait: task {name} is running {task['running']['capability']}"
+    if task["commit"] is None:
+        return f"build.run {job_id} {name}"
+    if task["verify"] is None:
+        return f"verify.run {job_id} {name}"
+    if not green(task["verify"]):
+        return f"build.run {job_id} {name} --fix" if fixable(task) else \
+            f"a person decides: task {name} still fails its checks after the fix round"
+    if task["review"] is None:
+        return f"review.run {job_id} {name}"
+    if not review_ok(task["review"]):
+        return f"build.run {job_id} {name} --fix" if fixable(task) else \
+            f"a person decides: task {name} still has serious review findings after the fix round"
+    return None
+
+
+def task_steps(job):
+    """The capability steps tasks can take now, one per task, when the job is in its task stage."""
+    first, words = next_step(job), next_step(job).split()
+    in_tasks = (words[0] in ("build.run", "verify.run", "review.run") and len(words) > 2 and words[2] in job["tasks"]
+                or first.startswith(("wait: task ", "a person decides: task ")))
+    if not in_tasks:
+        return []
+    steps = [task_step(job["id"], name, task) for name, task in job["tasks"].items()]
+    return [step for step in steps if step and step.split()[0] in CAPABILITIES]
 
 
 def _require(condition, reason):
@@ -196,6 +217,9 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
     if target != "integration" and capability in ("build.run", "verify.run", "review.run"):
         _require(target in job["tasks"], f"no task {target!r} in the plan")
         task = job["tasks"][target]
+        running = task.get("running")
+        _require(not running, f"task {target} is already running {running and running['capability']} "
+                              f"since {running and running['since']}")
         if capability == "build.run":
             _require(task["commit"] is None or fix, f"task {target} is already built")
             if fix:
@@ -210,6 +234,7 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
     _require(all(task_ok(task) for task in job["tasks"].values()),
              "every task must be built, pass its checks and pass its review first")
     _require(gate_open(job, "build"), "the build stage is not approved")
+    _require(not any(task.get("running") for task in job["tasks"].values()), "a task is still running")
     integration = job["integration"]
     if capability == "integrate.run":
         _require(not integration["merged"], "the tasks are already integrated")

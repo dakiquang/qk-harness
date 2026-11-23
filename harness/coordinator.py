@@ -4,12 +4,14 @@ It holds no rules of its own. Every step goes through the same capability a pers
 checks its own preconditions; the loop only reads `policy.next_step` and stops when that is not a capability.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from harness import capabilities, gitops, policy, state
 
 
 MAX_STEPS = 60  # a job with many tasks and one fix round each stays far below this
+DEFAULT_PARALLEL = 2  # task turns at once; verification still runs one at a time
 
 
 def parse_step(step):
@@ -21,11 +23,27 @@ def parse_step(step):
     return words[0], target, "--expect-red" in words, "--fix" in words
 
 
+def run_step(job_id, qk, step):
+    capability, target, expect_red, fix = parse_step(step)
+    return capabilities.run(job_id, capability, qk, target, expect_red=expect_red, fix=fix)
+
+
 def run(job_id, qk, max_steps=MAX_STEPS):
     """Advance the job; the last capability reply, with `stopped` saying why the loop ended."""
     reply = {}
     for _ in range(max_steps):
-        step = policy.next_step(state.load(job_id))
+        job = state.load(job_id)
+        width = job.get("options", {}).get("parallel", DEFAULT_PARALLEL)
+        batch = policy.task_steps(job)[:width]
+        if len(batch) > 1:  # several tasks can move: their turns run at once, each in its own qk process
+            with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                replies = list(pool.map(lambda step: run_step(job_id, qk, step), batch))
+            failed = [item for item in replies if item["status"] != "done"]
+            if failed:
+                return dict(failed[0], stopped=failed[0]["status"], parallel=replies)
+            reply = replies[-1]
+            continue
+        step = policy.next_step(job)
         parsed = parse_step(step)
         if parsed is None:
             stopped = "done" if step.startswith("done") else "aborted" if step.startswith("aborted") else "waiting"

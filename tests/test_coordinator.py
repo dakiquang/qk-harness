@@ -193,3 +193,77 @@ class NoContractTests(Sandbox):
             del job["options"]
         self.assertEqual(policy.next_step(state.load(job_id)), f"plan.write {job_id}")
         self.assertTrue(policy.contract_on(state.load(job_id)))
+
+
+class ParallelTests(Sandbox):
+    def job(self, parallel=2):
+        job_id = state.new_job(self.repo, "Add a greeting API and CLI", "medium", "main", "codex:", "claude:",
+                               parallel=parallel)["id"]
+        coordinator.run(job_id, self.qk)
+        capabilities.approve(job_id, "plan")
+        return job_id
+
+    def run_with_barrier(self, job_id, wait):
+        barrier = self.tmp / f"barrier-{job_id}"
+        barrier.mkdir()
+        with mock.patch.dict(os.environ, {"FAKE_AGENT": "", "FAKE_BARRIER": str(barrier), "FAKE_BARRIER_WAIT": wait}):
+            reply = coordinator.run(job_id, self.qk)
+        return reply, {path.stem: path.read_text() for path in barrier.glob("*.together")}
+
+    def test_two_tasks_build_at_the_same_time_and_reach_the_pull_request(self):
+        job_id = self.job()
+        reply, together = self.run_with_barrier(job_id, "10")
+        self.assertEqual(reply["stopped"], "done")
+        self.assertEqual(together, {"api": "True", "cli": "True"})
+        job = state.load(job_id)
+        self.assertTrue(all(task["commit"] and "running" not in task for task in job["tasks"].values()))
+        builds = [entry for entry in job["log"] if entry["capability"] == "build.run"]
+        self.assertEqual([entry["status"] for entry in builds], ["done", "done"])
+
+    def test_sequential_jobs_build_one_task_at_a_time(self):
+        job_id = self.job(parallel=1)
+        reply, together = self.run_with_barrier(job_id, "1")
+        self.assertEqual(reply["stopped"], "done")
+        self.assertEqual(together, {"api": "False", "cli": "False"})
+
+    def test_a_running_task_is_not_started_twice(self):
+        job_id = self.job()
+        self.advance(job_id, until=f"build.run {job_id} api")
+        with state.locked(job_id) as job:
+            job["tasks"]["api"]["running"] = {"capability": "build.run", "since": "now", "pid": 1}
+        reply = capabilities.run(job_id, "build.run", self.qk, "api")
+        self.assertEqual(reply["status"], "refused")
+        self.assertIn("task api is already running build.run", reply["reason"])
+        self.assertEqual(policy.task_steps(state.load(job_id)), [f"build.run {job_id} cli"])
+        self.assertEqual(capabilities.run(job_id, "integrate.run", self.qk)["status"], "refused")
+
+    def test_tasks_can_name_their_own_roles(self):
+        log = self.tmp / "qk-calls.jsonl"
+        with mock.patch.dict(os.environ, {"FAKE_PLAN_ROLES": json.dumps({"api": {"impl": "codex:alt"}}),
+                                          "FAKE_QK_LOG": str(log)}):
+            job_id = self.job()
+            self.assertEqual(coordinator.run(job_id, self.qk)["stopped"], "done")
+        task = state.load(job_id)["tasks"]["api"]
+        self.assertEqual((task["impl_spec"], task["review_spec"]), ("codex:alt", "claude:"))
+        specs = [argv[argv.index("--spec") + 1] for argv in (json.loads(line)["argv"]
+                                                             for line in log.read_text().splitlines())
+                 if argv[:2] == ["agent", "run"] and "--write" in argv]
+        self.assertIn("codex:alt", specs)
+
+    def test_role_families_are_checked_before_any_worker_runs(self):
+        for roles, reason in (({"api": {"review": "codex:"}}, "task api: reviewer codex: is the same model family"),
+                              ({"api": {"impl": "claude:", "review": "codex:"}},
+                               "the integration reviewer claude: is the same model family as a task implementer")):
+            with self.subTest(roles=roles), mock.patch.dict(os.environ, {"FAKE_PLAN_ROLES": json.dumps(roles)}):
+                job_id = state.new_job(self.repo, "x", "medium", "main", "codex:", "claude:")["id"]
+                reply = coordinator.run(job_id, self.qk)
+                self.assertEqual(reply["stopped"], "blocked")
+                self.assertIn(reason, reply["reason"])
+                self.assertIsNone(state.load(job_id)["plan"])
+
+    def test_cli_start_can_ask_for_one_task_at_a_time(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            cli.main(["--lock", str(self.lock), "start", "--repo", str(self.repo), "--task", "x", "--sequential"])
+        job_id = json.loads(output.getvalue())["id"]
+        self.assertEqual(state.load(job_id)["options"]["parallel"], 1)
