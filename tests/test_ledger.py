@@ -119,3 +119,75 @@ class LedgerTests(Sandbox):
     def test_stage_names_follow_qk_runner_stages(self):
         self.assertLessEqual(set(ledger.STAGES.values()), RUNNER_STAGES)
         self.assertEqual(set(ledger.STAGES), set(policy.CAPABILITIES))
+
+
+class ReviewFollowUpTests(Sandbox):
+    """Problems found when reviewing the integration fix round, the ledger and abort."""
+
+    logged, run_job, started = LedgerTests.logged, LedgerTests.run_job, LedgerTests.started
+
+    def setUp(self):
+        super().setUp()
+        self.log = self.tmp / "qk-calls.jsonl"
+        patch = mock.patch.dict(os.environ, {"FAKE_QK_LOG": str(self.log)})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_the_integration_fix_starts_only_from_the_checked_commit(self):
+        job_id = self.started()
+        with mock.patch.dict(os.environ, {"FAKE_AGENT": "integration-findings"}):
+            self.advance(job_id, until=f"build.run {job_id} integration --fix", agent="integration-findings")
+        worktree = Path(state.load(job_id)["integration"]["worktree"])
+        (worktree / "src" / "api" / "late.py").write_text("LATE = 1\n")
+        sh(worktree, "git", "add", "-A")
+        sh(worktree, "git", "commit", "-qm", "unrecorded")
+        reply = capabilities.run(job_id, "build.run", self.qk, "integration", fix=True)
+        self.assertEqual(reply["status"], "blocked")
+        self.assertIn("not the checked commit", reply["reason"])
+        self.assertEqual(state.load(job_id)["integration"].get("fix_rounds", 0), 0)
+
+    def test_a_task_blocked_in_a_parallel_batch_is_recorded(self):
+        job_id = self.started()
+        reply = self.run_job(job_id, "outside-cli")
+        self.assertEqual(reply["stopped"], "blocked")
+        self.assertEqual(reply["ledger"]["stage"], "blocked")
+        self.assertEqual(self.logged()[-1][1]["stage"], "blocked")
+
+    def test_labels_name_only_the_models_that_ran(self):
+        job_id = self.new()
+        reply = self.run_job(job_id, "no-verify")  # stops at the plan: only the implementer ran
+        self.assertEqual(reply["stopped"], "blocked")
+        data = self.logged()[-1][1]
+        self.assertEqual((data["impl"], data["review"]), ("codex:", ""))
+
+    def test_a_resume_that_changes_nothing_records_nothing_new(self):
+        job_id = self.started()
+        coordinator.finish(job_id, self.qk, coordinator.abort(job_id, "stop"))
+        with state.locked(job_id) as job:
+            job["tasks"]["api"]["running"] = {"capability": "build.run", "since": "earlier", "pid": 999999}
+        self.run_job(job_id)
+        self.assertEqual(len(self.logged()), 1)
+
+    def test_abort_stands_when_qk_cannot_record_it(self):
+        import contextlib, io
+        from harness import __main__ as cli
+        job_id = self.started()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = cli.main(["abort", job_id, "--reason", "stop", "--lock", str(self.tmp / "missing.lock")])
+        reply = json.loads(output.getvalue())
+        self.assertEqual((status, reply["status"]), (0, "done"))
+        self.assertIn("cannot read", reply["ledger"]["error"])
+        self.assertIn("left", reply)
+        self.assertTrue(state.load(job_id)["aborted"])
+
+    def test_abort_stands_when_the_qk_checkout_cannot_be_created(self):
+        import contextlib, io
+        from harness import __main__ as cli, qk_cli
+        job_id = self.started()
+        output = io.StringIO()
+        with mock.patch.object(qk_cli, "fetch", side_effect=PermissionError("read-only state directory")), \
+                contextlib.redirect_stdout(output):
+            status = cli.main(["--lock", str(self.lock), "abort", job_id])
+        reply = json.loads(output.getvalue())
+        self.assertEqual((status, reply["ledger"]["error"]), (0, "read-only state directory"))

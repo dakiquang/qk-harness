@@ -37,7 +37,8 @@ def run(job_id, qk, max_steps=MAX_STEPS):
 
 
 def finish(job_id, qk, reply):
-    logged = ledger.record(job_id, qk, reply.get("next") or policy.next_step(state.load(job_id)))
+    logged = ledger.record(job_id, qk, reply.get("next") or policy.next_step(state.load(job_id)),
+                           stopped=reply.get("stopped"))
     return dict(reply, ledger=logged) if logged else reply
 
 

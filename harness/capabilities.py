@@ -420,6 +420,9 @@ def integration_fix(job, qk):
     if not gitops.is_clean(worktree):
         raise Blocked(f"{worktree} has uncommitted changes; restore it first")
     head = gitops.git(worktree, "rev-parse", "HEAD")
+    if head != integration["commit"]:  # the fix starts from the commit whose checks or review failed, nothing else
+        raise Blocked(f"{integration['branch']} is at {head[:12]}, not the checked commit "
+                      f"{integration['commit'][:12]}; a person looks before anything is fixed")
     paths = sorted({path for task in job["tasks"].values() for path in task["owns"]})
     prompt = f"""Read {skill(qk, 'qk-cook')} and follow it to fix the integrated result of the approved plan
 {job['plan']['file']}. Work only inside {worktree}, and change only these paths: {', '.join(paths)}.

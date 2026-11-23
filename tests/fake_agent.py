@@ -4,7 +4,7 @@ It recognises which capability sent the prompt and acts like a cooperative agent
 `test_capabilities.py`. FAKE_AGENT holds comma-separated deviations:
 
 - `weak-contract`: the contract tests already pass
-- `outside`: a build also edits a file outside the task's paths
+- `outside` (or `outside-<task>` for one task): a build also edits a file outside the task's paths
 - `commit`: a build commits on its own
 - `broken`: the first build of `api` returns the wrong value (its checks fail)
 - `findings`: reviews report one important finding
@@ -94,7 +94,7 @@ if "build task `" in prompt:
     owned_test = re.search(r"change only these paths: ([^\n]*)", prompt)
     if owned_test and f"tests/test_{task}.py" in owned_test.group(1):  # the task writes its own test
         (cwd / "tests" / f"test_{task}.py").write_text("import unittest\n")
-    if "outside" in flags:
+    if "outside" in flags or f"outside-{task}" in flags:
         (cwd / "README.md").write_text("changed by a worker\n")
     if "commit" in flags:
         subprocess.run(["git", "add", "-A"], cwd=str(cwd), check=True)

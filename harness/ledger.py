@@ -2,24 +2,30 @@
 `qk brief` like a qk-run run. The ledger is qk's; the harness only hands it a stopped run in qk's documented shape.
 """
 
+import hashlib
+import json
 import os
 
 from harness import __version__, capabilities, gitops, state
 
 
+REVIEW_CAPABILITIES = ("contract.review", "review.run")
 # Capability -> the qk-run stage name qk's ledger keeps usage under (other names are dropped by qk).
 STAGES = {"plan.write": "planning", "contract.write": "implementing", "contract.review": "reviewing",
           "build.run": "implementing", "verify.run": "verifying", "review.run": "reviewing",
           "integrate.run": "publishing", "pr.open": "publishing"}
 
 
-def outcome(job, step):
-    """`done`, `blocked` or `aborted` for a job that has stopped, or None while it only waits at a gate."""
+def outcome(job, step, stopped=None):
+    """`done`, `blocked` or `aborted` for a job that has stopped, or None while it only waits at a gate.
+    `stopped` is the coordinator's own reason, which outranks the log: in a parallel batch a blocked task can be
+    followed in the log by another task that finished."""
     if job.get("aborted"):
         return "aborted"
     if step.startswith("done:"):
         return "done"
-    if step.startswith("a person decides") or job["log"] and job["log"][-1]["status"] == "blocked":
+    if stopped == "blocked" or step.startswith("a person decides") or \
+            job["log"] and job["log"][-1]["status"] == "blocked":
         return "blocked"
     return None
 
@@ -28,8 +34,10 @@ def run_state(job, stage):
     """The job in the shape `qk log run` reads (qk's CLI contract, version 1)."""
     integration = job["integration"]
     tasks = job["tasks"].values()
-    impl = sorted({job["impl"]} | {task.get("impl_spec", job["impl"]) for task in tasks})
-    review = sorted({job["review"]} | {task.get("review_spec", job["review"]) for task in tasks})
+    turns = job.get("usage", [])
+    # The models that actually ran, not the defaults: a job stopped early names only what did the work.
+    impl = sorted({entry["spec"] for entry in turns if entry.get("capability") not in REVIEW_CAPABILITIES})
+    review = sorted({entry["spec"] for entry in turns if entry.get("capability") in REVIEW_CAPABILITIES})
     usage = {}
     for entry in job.get("usage", []):
         name = STAGES.get(entry.get("capability"), "implementing" if entry.get("write") else "reviewing")
@@ -62,20 +70,22 @@ def run_state(job, stage):
     return data
 
 
-def record(job_id, qk, step):
+def record(job_id, qk, step, stopped=None):
     """Log the job if it has stopped and this state was not logged yet; {"id"} or {"error"}, or None."""
     with state.locked(job_id) as job:
-        stage = None if job.get("eval") else outcome(job, step)
+        stage = None if job.get("eval") else outcome(job, step, stopped)
         if stage is None:
             return None
         data = run_state(job, stage)
-        if job.get("logged") == [stage, len(job["log"])]:
-            return None  # nothing happened since the last record
+        unchanged = dict(data, ledger_revision=None)
+        digest = hashlib.sha256(json.dumps(unchanged, sort_keys=True).encode("utf-8")).hexdigest()
+        if job.get("logged") == digest:
+            return None  # the recorded run is the same as the last one
         reply = qk.log_run(data, f"qk-harness {__version__}", state.job_dir(job_id))
         if reply.code != 0 or not isinstance(reply.data, dict):
             return {"error": reply.stderr.strip()[-300:] or "qk log run failed"}
         job["ledger_revision"] = data["ledger_revision"]
-        job["logged"] = [stage, len(job["log"])]
+        job["logged"] = digest
         return {"id": reply.data["id"], "stage": stage}
 
 
