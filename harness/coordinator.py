@@ -7,7 +7,7 @@ checks its own preconditions; the loop only reads `policy.next_step` and stops w
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from harness import capabilities, gitops, policy, state
+from harness import capabilities, gitops, ledger, policy, state
 
 
 MAX_STEPS = 60  # a job with many tasks and one fix round each stays far below this
@@ -29,7 +29,19 @@ def run_step(job_id, qk, step):
 
 
 def run(job_id, qk, max_steps=MAX_STEPS):
-    """Advance the job; the last capability reply, with `stopped` saying why the loop ended."""
+    """Advance the job; the last capability reply, with `stopped` saying why the loop ended. A job that has
+    stopped (done, blocked, aborted, or waiting for a person's decision) is recorded in qk's ledger."""
+    cleared = ledger.recover(job_id)
+    reply = finish(job_id, qk, loop(job_id, qk, max_steps))
+    return dict(reply, recovered=cleared) if cleared else reply
+
+
+def finish(job_id, qk, reply):
+    logged = ledger.record(job_id, qk, reply.get("next") or policy.next_step(state.load(job_id)))
+    return dict(reply, ledger=logged) if logged else reply
+
+
+def loop(job_id, qk, max_steps):
     reply = {}
     for _ in range(max_steps):
         job = state.load(job_id)

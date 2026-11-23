@@ -52,7 +52,8 @@ def turn(qk, job, spec, cwd, prompt, *, write, add_dirs=()):
                          events=f"{stem}.events.jsonl")
     data = reply.data if isinstance(reply.data, dict) else {}
     Path(f"{stem}.out.md").write_text(str(data.get("text") or reply.stderr), encoding="utf-8")
-    job.setdefault("usage", []).append({"spec": spec, "write": write, "status": data.get("status") or "failed",
+    job.setdefault("usage", []).append({"spec": spec, "write": write, "capability": job.get("current"),
+                                        "status": data.get("status") or "failed",
                                         "usage": data.get("usage"), "seconds": data.get("seconds"),
                                         "events": f"{stem}.events.jsonl"})
     if reply.code != 0 or data.get("status") != "done" or not isinstance(data.get("result"), dict):
@@ -311,6 +312,10 @@ def build_run(job, qk, name, fix=False):
     if not gitops.is_clean(worktree):
         raise Blocked(f"{worktree} has uncommitted changes; restore it before building")
     head = gitops.git(worktree, "rev-parse", "HEAD")
+    expected = task["commit"] if fix else build_base(job)
+    if head != expected:  # e.g. a commit made just before an interruption, never recorded: do not build twice
+        raise Blocked(f"{task['branch']} is at {head[:12]}, but the job expects {expected[:12]}; "
+                      "a person looks before anything is built again")
     problems = fix_problems(task) if fix else ""
     contract_rule = (f"The contract tests ({', '.join(job['contract']['files'])}) define done; do not change them."
                      if policy.contract_on(job) else "The plan's done criteria define done.")
@@ -501,6 +506,7 @@ def run_unlocked(job_id, capability, qk, target, fix):
             return {"status": "refused", "capability": capability, "reason": str(refused), "next": policy.next_step(job)}
         job["tasks"][target]["running"] = {"capability": capability, "since": now(), "pid": os.getpid()}
         work = copy.deepcopy(job)
+        work["current"] = capability
     seen = len(work.get("usage", []))
     status, reason, details = "done", "", {}
     try:
@@ -532,6 +538,7 @@ def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
             record(job, capability, "refused", str(refused))
             return {"status": "refused", "capability": capability, "reason": str(refused), "next": policy.next_step(job)}
         action = ACTIONS[capability]
+        job["current"] = capability
         try:
             if capability == "build.run" and target == "integration":
                 details = integration_fix(job, qk)

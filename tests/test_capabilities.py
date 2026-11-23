@@ -24,7 +24,7 @@ IDENTITY = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GI
 GH = '''#!/bin/sh
 echo "$@" >> "$FAKE_GH_LOG"
 case "$1 $2" in
-  "pr list") exit 0 ;;
+  "pr list") grep -q "^pr create" "$FAKE_GH_LOG" 2>/dev/null && echo "https://github.com/example/project/pull/7"; exit 0 ;;
   "pr create") echo "https://github.com/example/project/pull/7" ;;
   "repo view") echo "${FAKE_GH_PERMISSION:-WRITE}" ;;
 esac

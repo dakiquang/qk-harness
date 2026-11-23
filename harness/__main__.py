@@ -82,6 +82,9 @@ def main(argv=None):
             reply = capabilities.approve(args.job, args.stage)
         elif args.command == "abort":
             reply = coordinator.abort(args.job, args.reason)
+            if reply["status"] == "done":
+                lock = qk_cli.load_lock(args.lock)
+                reply = coordinator.finish(args.job, qk_cli.Qk(qk_cli.fetch(lock), lock), reply)
         else:
             lock = qk_cli.load_lock(args.lock)
             qk = qk_cli.Qk(qk_cli.fetch(lock), lock)
