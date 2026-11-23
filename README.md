@@ -14,6 +14,7 @@ Early work. What exists today:
 - Job state (`harness/state.py`): one JSON file per job in the state directory, locked while a step runs and saved by atomic replace.
 - Policy (`harness/policy.py`): the preconditions of every capability and the gates of each job size, read from the job state alone. A capability called too early is refused with the reason and the next command, whether a person or a coordinator calls it.
 - Eight capabilities (`harness/capabilities.py`), each one command: `plan.write`, `contract.write`, `contract.review`, `build.run`, `verify.run`, `review.run`, `integrate.run`, `pr.open`. Plus `start`, `status` and `approve`.
+- The coordinator (`harness/coordinator.py`, `run`/`resume`): runs each next step until a gate, a blocked step or the end. It has no rules of its own; every step is the capability a person could call by hand. `abort` stops a job for good and lists the branches and worktrees it leaves.
 
 ## How a job moves
 
@@ -32,7 +33,10 @@ A medium job has one gate, the plan. A large job also stops after the contract, 
 ```bash
 python3 -m harness doctor
 python3 -m harness start --repo PATH --task "..." [--size medium|large]
+python3 -m harness run JOB          # or resume; stops at each gate
+python3 -m harness approve JOB plan
 python3 -m harness status JOB
+python3 -m harness abort JOB --reason "..."
 ```
 
 The state directory is `$QK_HARNESS_STATE_DIR`, else `$XDG_STATE_HOME/qk-harness`, else `~/.local/state/qk-harness`. Python 3.9+ and `git`; no other dependencies.

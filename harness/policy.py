@@ -73,6 +73,8 @@ def fixable(task):
 def next_step(job):
     """The command that moves the job forward, or why a person has to act."""
     job_id = job["id"]
+    if job.get("aborted"):
+        return f"aborted: {job['aborted']['reason'] or 'no reason given'}"
     if job["plan"] is None:
         return f"plan.write {job_id}"
     if not plan_unchanged(job):
@@ -138,6 +140,7 @@ class Refused(Exception):
 def check(job, capability, target=None, *, expect_red=False, fix=False):
     """Raise Refused unless `capability` may run now on `target` (a task name or "integration")."""
     _require(capability in CAPABILITIES, f"unknown capability {capability!r}")
+    _require(not job.get("aborted"), "the job is aborted")
     _require(not expect_red or (capability == "verify.run" and target == "integration"),
              "--expect-red only checks the contract on the integration branch before any build")
     if capability == "plan.write":
@@ -196,6 +199,7 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
 
 def check_approval(job, stage):
     """Raise Refused unless a person may approve `stage` now."""
+    _require(not job.get("aborted"), "the job is aborted")
     _require(stage in GATES[job["size"]], f"a {job['size']} job has no {stage} gate; gates: "
              f"{', '.join(GATES[job['size']])}")
     _require(job["plan"] is not None, "there is no plan to approve yet")

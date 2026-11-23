@@ -34,7 +34,9 @@ def sh(cwd, *args):
     return subprocess.run(list(args), cwd=str(cwd), check=True, capture_output=True, text=True).stdout.strip()
 
 
-class CapabilityTests(unittest.TestCase):
+class Sandbox(unittest.TestCase):
+    """A sample project with a bare remote, a stand-in qk and gh, and helpers; no tests of its own."""
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -87,6 +89,8 @@ class CapabilityTests(unittest.TestCase):
                     return step, reply
         self.fail("the job did not settle")
 
+
+class CapabilityTests(Sandbox):
     # --- end to end
 
     def test_medium_job_runs_to_one_pull_request_with_one_gate(self):

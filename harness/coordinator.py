@@ -1,0 +1,55 @@
+"""The thin loop: run whatever `next` names until a person must act, a step is blocked, or the job is done.
+
+It holds no rules of its own. Every step goes through the same capability a person could call by hand, which
+checks its own preconditions; the loop only reads `policy.next_step` and stops when that is not a capability.
+"""
+
+from pathlib import Path
+
+from harness import capabilities, gitops, policy, state
+
+
+MAX_STEPS = 60  # a job with many tasks and one fix round each stays far below this
+
+
+def parse_step(step):
+    """(capability, target, expect_red, fix) for a capability step, or None for a step a person takes."""
+    words = step.split()
+    if not words or words[0] not in policy.CAPABILITIES:
+        return None
+    target = next((word for word in words[2:] if not word.startswith("--")), None)
+    return words[0], target, "--expect-red" in words, "--fix" in words
+
+
+def run(job_id, qk, max_steps=MAX_STEPS):
+    """Advance the job; the last capability reply, with `stopped` saying why the loop ended."""
+    reply = {}
+    for _ in range(max_steps):
+        step = policy.next_step(state.load(job_id))
+        parsed = parse_step(step)
+        if parsed is None:
+            stopped = "done" if step.startswith("done") else "aborted" if step.startswith("aborted") else "waiting"
+            return dict(reply, stopped=stopped, next=step)
+        capability, target, expect_red, fix = parsed
+        reply = capabilities.run(job_id, capability, qk, target, expect_red=expect_red, fix=fix)
+        if reply["status"] != "done":
+            return dict(reply, stopped=reply["status"])
+    return dict(reply, stopped="limit", next=policy.next_step(state.load(job_id)),
+                reason=f"stopped after {max_steps} steps without reaching a gate; a person looks")
+
+
+def abort(job_id, reason):
+    """Mark the job aborted. Branches and worktrees stay for a person to inspect or remove."""
+    with state.locked(job_id) as job:
+        if job.get("aborted"):
+            return {"status": "refused", "reason": "the job is already aborted", "next": policy.next_step(job)}
+        job["aborted"] = {"at": capabilities.now(), "reason": reason}
+        capabilities.record(job, "abort", "done", reason)
+        places = [(job["integration"]["worktree"], job["integration"]["branch"])] + \
+            [(task["worktree"], task["branch"]) for task in job["tasks"].values()]
+        # Only what exists: a task that was never built has no worktree or branch to clean up.
+        branches = [branch for _, branch in places
+                    if gitops.git(job["repo"], "rev-parse", "--verify", "-q", f"refs/heads/{branch}",
+                                  check=False).returncode == 0]
+        return {"status": "done", "reason": "", "next": policy.next_step(job),
+                "left": {"worktrees": [path for path, _ in places if Path(path).exists()], "branches": branches}}

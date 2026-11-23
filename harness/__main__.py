@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from harness import capabilities, gitops, policy, qk_cli, state
+from harness import capabilities, coordinator, gitops, policy, qk_cli, state
 
 
 LOCK = Path(__file__).resolve().parent.parent / "qk.lock"
@@ -33,6 +33,11 @@ def parser():
     start.add_argument("--base", help="default: the repository's current branch")
     start.add_argument("--impl", default=DEFAULT_IMPL, help="runtime:model that writes")
     start.add_argument("--review", default=DEFAULT_REVIEW, help="runtime:model that reviews; another family")
+    run = commands.add_parser("run", aliases=["resume"], help="run each next step until a gate, a block or the end")
+    run.add_argument("job")
+    abort = commands.add_parser("abort", help="stop a job for good; branches and worktrees stay for inspection")
+    abort.add_argument("job")
+    abort.add_argument("--reason", default="")
     status = commands.add_parser("status", help="print a job and its next step")
     status.add_argument("job")
     approve = commands.add_parser("approve", help="record a person's approval of one stage")
@@ -66,6 +71,8 @@ def main(argv=None):
             reply = summary(state.load(args.job))
         elif args.command == "approve":
             reply = capabilities.approve(args.job, args.stage)
+        elif args.command == "abort":
+            reply = coordinator.abort(args.job, args.reason)
         else:
             lock = qk_cli.load_lock(args.lock)
             qk = qk_cli.Qk(qk_cli.fetch(lock), lock)
@@ -79,6 +86,8 @@ def main(argv=None):
                 base = args.base or gitops.git(args.repo, "symbolic-ref", "--short", "HEAD")
                 job = state.new_job(args.repo, args.task, args.size, base, args.impl, args.review)
                 reply = dict(summary(job), status="done")
+            elif args.command in ("run", "resume"):
+                reply = coordinator.run(args.job, qk)
             else:
                 reply = capabilities.run(args.job, args.command, qk, getattr(args, "target", None),
                                          expect_red=getattr(args, "expect_red", False), fix=getattr(args, "fix", False))
@@ -86,6 +95,8 @@ def main(argv=None):
         print(f"qk-harness: {error}", file=sys.stderr)
         return 2
     print(json.dumps(reply, ensure_ascii=False))
+    if "stopped" in reply:  # the loop: waiting at a gate and done are normal ends
+        return 0 if reply["stopped"] in ("waiting", "done") else 2
     return 0 if reply.get("status", "done") == "done" else 2
 
 
