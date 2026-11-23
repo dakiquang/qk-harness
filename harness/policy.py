@@ -123,6 +123,8 @@ def next_step(job):
         return "a person decides: the integrated branch has serious review findings"
     if not gate_open(job, "integrate"):
         return f"approve {job_id} integrate"
+    if job.get("eval"):
+        return "done: an eval job is graded instead of opening a pull request"
     if job["pr_url"] is None:
         return f"pr.open {job_id}"
     return f"done: a person reviews and merges {job['pr_url']}"
@@ -192,6 +194,7 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
     if capability == "review.run":
         return
     # pr.open
+    _require(not job.get("eval"), "an eval job never opens a pull request")
     _require(review_ok(integration["review"]), "the integrated branch has not passed its review")
     _require(gate_open(job, "integrate"), "the integration stage is not approved")
     _require(job["pr_url"] is None, f"the pull request already exists: {job['pr_url']}")

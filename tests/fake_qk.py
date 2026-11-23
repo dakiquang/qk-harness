@@ -75,14 +75,35 @@ if command == "log run":
     state = json.loads(stdin)
     reply({"contract": 1, "id": "fake-" + state["id"], "findings": len(state.get("findings", []))})
 if command == "eval prepare":
-    workdir = Path(argv[3]) / "repo"
-    workdir.mkdir(parents=True)
+    import subprocess
+    root = Path(argv[3])
+    workdir = root / "repo"
+    (workdir / "tests").mkdir(parents=True)
+    if argv[2].endswith("-review"):  # a review case: plan and diff, no task
+        (root / "plan.md").write_text("# plan\n")
+        reply({"contract": 1, "case": argv[2], "skill": "runner-review", "write": False, "workdir": str(workdir),
+               "task": None, "plan": str(root / "plan.md"), "diff": str(root / "review.diff")})
+    (workdir / "README.md").write_text("project\n")
+    (workdir / "task.md").write_text("Add a greeting API and CLI.\n")
+    (workdir / "tests" / "test_base.py").write_text(
+        "import unittest\n\n\nclass Base(unittest.TestCase):\n    def test_ok(self):\n        pass\n")
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["-c", "user.name=e", "-c", "user.email=e@example.invalid",
+                                                              "commit", "-qm", "base"]):
+        subprocess.run(["git", *args], cwd=str(workdir), check=True, capture_output=True)
     reply({"contract": 1, "case": argv[2], "skill": "qk-cook", "write": True, "workdir": str(workdir),
            "task": str(workdir / "task.md"), "plan": None, "diff": None})
 if command == "eval grade":
-    passed = scenario == "done"
-    reply({"contract": 1, "case": argv[2], "criteria": [{"name": "fake", "passed": passed, "detail": ""}],
-           "passed": passed})
+    workdir = Path(argv[3])
+    final_path = Path(argv[argv.index("--final") + 1]) if "--final" in argv else None
+    final = final_path.read_text() if final_path and final_path.is_file() else ""
+    criteria = [{"name": "built", "passed": (workdir / "src" / "api").is_dir() and (workdir / "src" / "cli").is_dir(),
+                 "detail": ""},
+                {"name": "report", "passed": all(label + ":" in final for label in
+                                                 ("Done", "Evidence", "Not verified", "Needs your decision")),
+                 "detail": ""}]
+    if scenario != "done":
+        criteria.append({"name": "fake", "passed": False, "detail": "scenario"})
+    reply({"contract": 1, "case": argv[2], "criteria": criteria, "passed": all(c["passed"] for c in criteria)})
 if command == "show":
     reply([])
 print("qk: unknown command", file=sys.stderr)

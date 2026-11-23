@@ -161,7 +161,7 @@ class QkCliTests(unittest.TestCase):
         prepared = qk.eval_prepare("csv-export", self.tmp / "case").data
         self.assertTrue(Path(prepared["workdir"]).is_dir())
         graded = qk.eval_grade("csv-export", prepared["workdir"], final=self.tmp / "f.md", events=self.tmp / "e")
-        self.assertTrue(graded.data["passed"])
+        self.assertEqual((graded.code, graded.data["passed"]), (0, False))  # nothing was built in the case repo
         self.assertEqual(self.calls()[-1]["argv"][-4:], ["--final", str(self.tmp / "f.md"), "--events",
                                                          str(self.tmp / "e")])
         self.assertEqual(qk.show(kind="run").data, [])

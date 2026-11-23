@@ -28,6 +28,10 @@ A plan lays out the work in a ```` ```qk-harness ```` block: `contract` names th
 
 A medium job has one gate, the plan. A large job also stops after the contract, the build and the integration, and `pr.open` waits for the last approval. `status <job>` prints the next step.
 
+## Measuring the harness
+
+`python3 -m harness eval CASE [--impl SPEC] [--review SPEC]` runs one of qk's eval cases that builds something (not a review case): `qk eval prepare` builds the case repository, a medium job runs on it, the eval approves the plan gate itself (recorded as `"by": "eval"`), the job stops after the integrated branch is reviewed instead of opening a pull request, and `qk eval grade` grades the integrated branch. The grader's final reply is the harness's own four-line report (Done, Evidence, Not verified, Needs your decision), written from the job state. `result.json` in the eval directory holds the criteria, token and time totals of every agent turn, and the case's baseline from the pinned qk. This runs real agents and costs money.
+
 ## Use
 
 ```bash

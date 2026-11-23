@@ -49,6 +49,9 @@ def turn(qk, job, spec, cwd, prompt, *, write, add_dirs=()):
                          events=f"{stem}.events.jsonl")
     data = reply.data if isinstance(reply.data, dict) else {}
     Path(f"{stem}.out.md").write_text(str(data.get("text") or reply.stderr), encoding="utf-8")
+    job.setdefault("usage", []).append({"spec": spec, "write": write, "status": data.get("status") or "failed",
+                                        "usage": data.get("usage"), "seconds": data.get("seconds"),
+                                        "events": f"{stem}.events.jsonl"})
     if reply.code != 0 or data.get("status") != "done" or not isinstance(data.get("result"), dict):
         raise Blocked(f"{spec} turn {data.get('status') or 'failed'}: "
                       f"{data.get('reason') or reply.stderr.strip()[-300:] or 'no result'}")

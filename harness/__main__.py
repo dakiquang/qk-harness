@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from harness import capabilities, coordinator, gitops, policy, qk_cli, state
+from harness import capabilities, coordinator, evaluate, gitops, policy, qk_cli, state
 
 
 LOCK = Path(__file__).resolve().parent.parent / "qk.lock"
@@ -38,6 +38,10 @@ def parser():
     abort = commands.add_parser("abort", help="stop a job for good; branches and worktrees stay for inspection")
     abort.add_argument("job")
     abort.add_argument("--reason", default="")
+    measure = commands.add_parser("eval", help="measure the harness on one of qk's eval cases (runs agents)")
+    measure.add_argument("case")
+    measure.add_argument("--impl", default=DEFAULT_IMPL)
+    measure.add_argument("--review", default=DEFAULT_REVIEW)
     status = commands.add_parser("status", help="print a job and its next step")
     status.add_argument("job")
     approve = commands.add_parser("approve", help="record a person's approval of one stage")
@@ -86,12 +90,17 @@ def main(argv=None):
                 base = args.base or gitops.git(args.repo, "symbolic-ref", "--short", "HEAD")
                 job = state.new_job(args.repo, args.task, args.size, base, args.impl, args.review)
                 reply = dict(summary(job), status="done")
+            elif args.command == "eval":
+                if capabilities.family(qk, args.impl) == capabilities.family(qk, args.review):
+                    raise capabilities.Blocked(f"{args.impl} and {args.review} are the same model family")
+                reply = evaluate.run_eval(args.case, qk, args.impl, args.review)
             elif args.command in ("run", "resume"):
                 reply = coordinator.run(args.job, qk)
             else:
                 reply = capabilities.run(args.job, args.command, qk, getattr(args, "target", None),
                                          expect_red=getattr(args, "expect_red", False), fix=getattr(args, "fix", False))
-    except (qk_cli.QkError, state.JobError, capabilities.Blocked, gitops.GitError) as error:
+    except (qk_cli.QkError, state.JobError, capabilities.Blocked, gitops.GitError, evaluate.EvalError,
+            policy.Refused) as error:
         print(f"qk-harness: {error}", file=sys.stderr)
         return 2
     print(json.dumps(reply, ensure_ascii=False))
