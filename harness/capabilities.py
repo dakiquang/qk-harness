@@ -91,8 +91,10 @@ def clean_paths(paths):
     return paths
 
 
-def parse_plan(text):
-    """(plan text, verify commands, contract paths, tasks) from a planner reply, or Blocked naming what is missing."""
+def parse_plan(text, contract_stage=True):
+    """(plan text, verify commands, contract paths, tasks) from a planner reply, or Blocked naming what is missing.
+
+    Without a contract stage there are no contract paths: each task owns the tests that check it."""
     plans = PLAN_RE.findall(text)
     if not plans:
         raise Blocked("planner returned no <<<QK-PLAN ... QK-PLAN>>> block")
@@ -108,7 +110,9 @@ def parse_plan(text):
         tasks, contract = layout.get("tasks"), layout.get("contract")
     except (ValueError, AttributeError) as error:
         raise Blocked(f"the ```qk-harness``` block is not valid: {error}") from None
-    if clean_paths(contract) is None:
+    if not contract_stage:
+        contract = []  # nobody writes a separate contract; paths named anyway would belong to no one
+    elif clean_paths(contract) is None:
         raise Blocked("the ```qk-harness``` block must name the test paths the contract may write in \"contract\"")
     if not isinstance(tasks, list) or not tasks:
         raise Blocked("the plan has no ```qk-harness``` block listing its tasks")
@@ -143,10 +147,22 @@ def owned(path, owns):
     return any(path == item.rstrip("/") or path.startswith(item.rstrip("/") + "/") for item in owns)
 
 
+CONTRACT_LAYOUT = """The plan MUST also contain a fenced block ```qk-harness``` with JSON {"contract": ["tests/..."],
+"tasks": [{"name": "...", "owns": ["dir/", "file.py"], "verify": ["command"], "summary": "..."}]}. "contract"
+lists the test paths where the tests that define done will be written first. Tasks are what separate workers can
+build at the same time. Tests that define done are written separately before any task is built; do not give them
+to a task."""
+PLAIN_LAYOUT = """The plan MUST also contain a fenced block ```qk-harness``` with JSON {"tasks": [{"name": "...",
+"owns": ["dir/", "file.py", "tests/test_x.py"], "verify": ["command"], "summary": "..."}]}. Tasks are what separate
+workers can build at the same time. There is no separate test-writing step: each task owns and writes the tests
+that check it, so list those test files in its "owns"."""
+
+
 def plan_write(job, qk):
     repo = Path(job["repo"])
     if not gitops.is_clean(repo):
         raise Blocked(f"{repo} has uncommitted changes; commit or stash them first")
+    layout = CONTRACT_LAYOUT if policy.contract_on(job) else PLAIN_LAYOUT
     prompt = f"""Read {skill(qk, 'qk-plan')} and follow it in `create` mode, read-only.
 Repository checkout: {repo} (base {job['base']}). Do not edit files or run commands that write.
 Task: {job['task']}
@@ -154,17 +170,13 @@ Instead of saving a file, put the complete plan between a line `<<<QK-PLAN` and 
 Start the plan with a `# <title>` line of at most 60 characters.
 The plan MUST contain a fenced block ```qk-verify``` listing, one per line, the shell commands discovered from this
 repository that prove the done criteria; each runs from the repository root and exits 0 on success.
-The plan MUST also contain a fenced block ```qk-harness``` with JSON {{"contract": ["tests/..."], "tasks":
-[{{"name": "...", "owns": ["dir/", "file.py"], "verify": ["command"], "summary": "..."}}]}}. "contract" lists the
-test paths where the tests that define done will be written first. Tasks are what separate workers can build at
-the same time.
+{layout}
 Each task owns the paths it may change, and no path may belong to two tasks. Each task's "verify" commands check
 that task on its own, without the other tasks; the qk-verify commands check the whole result. Task names are short
 lowercase words.
-Tests that define done are written separately before any task is built; do not give them to a task.
 {NO_GIT}"""
     result, text = turn(qk, job, job["impl"], repo, prompt, write=False)
-    plan, commands, contract, tasks = parse_plan(text)
+    plan, commands, contract, tasks = parse_plan(text, policy.contract_on(job))
     path = shared(job) / "plan.md"
     path.write_text(plan, encoding="utf-8")
     job["plan"] = {"file": str(path), "sha256": hashlib.sha256(plan.encode("utf-8")).hexdigest(),

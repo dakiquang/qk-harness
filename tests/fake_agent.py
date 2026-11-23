@@ -38,8 +38,13 @@ if "`create` mode" in prompt:
              {"name": "cli", "owns": ["src/api/" if "overlap" in flags else "src/cli/"],
               "verify": ["python3 -c \"from src.cli import name; assert name() == 'cli'\""]}]
     verify = "" if "no-verify" in flags else "```qk-verify\npython3 -m unittest discover -s tests\n```\n"
+    layout = {"contract": ["tests/"], "tasks": tasks}
+    if "no separate test-writing step" in prompt:  # without a contract, each task owns its own tests
+        layout = {"tasks": tasks}
+        for task in tasks:
+            task["owns"].append(f"tests/test_{task['name']}.py")
     print("<<<QK-PLAN\n# Add greeting API and CLI\n\nDone when both tests pass.\n\n" + verify
-          + "```qk-harness\n" + json.dumps({"contract": ["tests/"], "tasks": tasks}) + "\n```\nQK-PLAN>>>")
+          + "```qk-harness\n" + json.dumps(layout) + "\n```\nQK-PLAN>>>")
     done("planned")
 if prompt.startswith("Write the contract"):
     tests = cwd / "tests"
@@ -68,6 +73,9 @@ if "build task `" in prompt:
         value = "'wrong'"
     function = "greet" if task == "api" else "name"
     (package / "__init__.py").write_text(f"def {function}():\n    return {value}\n")
+    owned_test = re.search(r"change only these paths: ([^\n]*)", prompt)
+    if owned_test and f"tests/test_{task}.py" in owned_test.group(1):  # the task writes its own test
+        (cwd / "tests" / f"test_{task}.py").write_text("import unittest\n")
     if "outside" in flags:
         (cwd / "README.md").write_text("changed by a worker\n")
     if "commit" in flags:

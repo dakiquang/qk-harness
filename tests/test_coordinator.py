@@ -148,6 +148,25 @@ class NoContractTests(Sandbox):
         self.assertEqual(sh(self.repo, "git", "merge-base", api["commit"], job["base_sha"]), job["base_sha"])
         self.assertEqual(sh(self.repo, "git", "rev-parse", f"{api['commit']}^"), job["base_sha"])
 
+    def test_without_a_contract_the_plan_gives_each_task_its_own_tests(self):
+        job_id = self.new_plain()
+        self.run_job(job_id)
+        capabilities.approve(job_id, "plan")
+        self.assertEqual(self.run_job(job_id)["stopped"], "done")
+        job = state.load(job_id)
+        self.assertEqual(job["plan"]["contract"], [])
+        self.assertIn("tests/test_api.py", job["tasks"]["api"]["owns"])
+        from test_capabilities import sh
+        files = sh(self.repo, "git", "show", "--name-only", "--format=", job["tasks"]["api"]["commit"]).split()
+        self.assertEqual(sorted(files), ["src/api/__init__.py", "tests/test_api.py"])
+
+    def test_a_contract_job_still_keeps_tests_out_of_tasks(self):
+        job_id = self.new()
+        self.run_job(job_id)
+        job = state.load(job_id)
+        self.assertEqual(job["plan"]["contract"], ["tests/"])
+        self.assertNotIn("tests/test_api.py", job["tasks"]["api"]["owns"])
+
     def test_contract_steps_are_refused_without_a_contract(self):
         job_id = self.new_plain()
         self.run_job(job_id)
