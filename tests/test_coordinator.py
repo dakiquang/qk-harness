@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_capabilities import Sandbox  # noqa: E402
-from harness import __main__ as cli, capabilities, coordinator, state  # noqa: E402
+from harness import __main__ as cli, capabilities, coordinator, policy, state  # noqa: E402
 
 
 class CoordinatorTests(Sandbox):
@@ -124,3 +124,53 @@ class CoordinatorTests(Sandbox):
         self.assertEqual(coordinator.parse_step("integrate.run J"), ("integrate.run", None, False, False))
         self.assertIsNone(coordinator.parse_step("approve J plan"))
         self.assertIsNone(coordinator.parse_step("a person decides: x"))
+
+
+class NoContractTests(Sandbox):
+    def new_plain(self, size="medium"):
+        return state.new_job(self.repo, "Add a greeting API and CLI", size, "main", "codex:", "claude:",
+                             contract=False)["id"]
+
+    def run_job(self, job_id, agent=""):
+        with mock.patch.dict(os.environ, {"FAKE_AGENT": agent}):
+            return coordinator.run(job_id, self.qk)
+
+    def test_a_job_without_a_contract_skips_that_stage_and_still_reaches_the_pull_request(self):
+        job_id = self.new_plain()
+        self.run_job(job_id)
+        capabilities.approve(job_id, "plan")
+        self.assertEqual(self.run_job(job_id)["stopped"], "done")
+        job = state.load(job_id)
+        self.assertIsNone(job["contract"])
+        self.assertFalse([entry for entry in job["log"] if entry["capability"].startswith("contract")])
+        api = job["tasks"]["api"]
+        from test_capabilities import sh
+        self.assertEqual(sh(self.repo, "git", "merge-base", api["commit"], job["base_sha"]), job["base_sha"])
+        self.assertEqual(sh(self.repo, "git", "rev-parse", f"{api['commit']}^"), job["base_sha"])
+
+    def test_contract_steps_are_refused_without_a_contract(self):
+        job_id = self.new_plain()
+        self.run_job(job_id)
+        capabilities.approve(job_id, "plan")
+        for capability, target, red in (("contract.write", None, False), ("contract.review", None, False),
+                                        ("verify.run", "integration", True)):
+            reply = capabilities.run(job_id, capability, self.qk, target, expect_red=red)
+            self.assertEqual((reply["status"], reply["reason"]),
+                             ("refused", "this job was started without a contract"), capability)
+
+    def test_a_large_job_without_a_contract_has_three_gates(self):
+        job_id = self.new_plain("large")
+        stops = []
+        for stage in ("plan", "build", "integrate"):
+            stops.append(self.run_job(job_id)["next"])
+            capabilities.approve(job_id, stage)
+        self.assertEqual(stops, [f"approve {job_id} {stage}" for stage in ("plan", "build", "integrate")])
+        self.assertIn("has no contract gate", capabilities.approve(job_id, "contract")["reason"])
+        self.assertEqual(self.run_job(job_id)["stopped"], "done")
+
+    def test_jobs_saved_before_the_option_keep_their_contract(self):
+        job_id = self.new()
+        with state.locked(job_id) as job:
+            del job["options"]
+        self.assertEqual(policy.next_step(state.load(job_id)), f"plan.write {job_id}")
+        self.assertTrue(policy.contract_on(state.load(job_id)))

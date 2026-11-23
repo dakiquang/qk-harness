@@ -40,8 +40,8 @@ def slugify(text, limit=40):
     return slug or "task"
 
 
-def new_job(repo, task, size, base, impl, review):
-    """A new job in its first stage; the repository is not touched."""
+def new_job(repo, task, size, base, impl, review, contract=True):
+    """A new job in its first stage; the repository is not touched. `contract` False skips the contract stage."""
     if size not in SIZES:
         raise JobError(f"size must be one of {', '.join(SIZES)}")
     repo = Path(repo).resolve()
@@ -51,6 +51,7 @@ def new_job(repo, task, size, base, impl, review):
         "version": VERSION, "id": job_id, "repo": str(repo), "base": base,
         "base_sha": gitops.git(repo, "rev-parse", f"refs/heads/{base}"),
         "task": task, "slug": slug, "size": size, "impl": impl, "review": review,
+        "options": {"contract": bool(contract)},
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "plan": None, "approvals": {}, "contract": None, "tasks": {},
         "integration": {"branch": f"qk/{slug}", "worktree": str(job_dir(job_id) / "integration"),

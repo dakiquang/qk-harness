@@ -36,9 +36,14 @@ def approved(job, stage):
     return bool(record) and job["plan"] is not None and record.get("plan_sha256") == job["plan"]["sha256"]
 
 
+def gates(job):
+    """The stages a person approves for this job: by size, without the contract gate when there is no contract."""
+    return tuple(stage for stage in GATES[job["size"]] if stage != "contract" or contract_on(job))
+
+
 def gate_open(job, stage):
-    """A stage this job's size does not gate counts as approved."""
-    return stage not in GATES[job["size"]] or approved(job, stage)
+    """A stage this job does not gate counts as approved."""
+    return stage not in gates(job) or approved(job, stage)
 
 
 def green(verify):
@@ -54,7 +59,14 @@ def review_ok(review):
     return review is not None and review.get("status") == "done" and not serious(review)
 
 
+def contract_on(job):
+    """Whether this job writes and checks a contract before building (on unless started without one)."""
+    return job.get("options", {}).get("contract", True)
+
+
 def contract_ok(job):
+    if not contract_on(job):
+        return True
     contract = job["contract"]
     return contract is not None and review_ok(contract.get("review")) and contract.get("red") is True
 
@@ -82,20 +94,22 @@ def next_step(job):
     if not approved(job, "plan"):
         return f"approve {job_id} plan"
     contract = job["contract"]
-    if contract is None:
+    if not contract_on(job):
+        pass
+    elif contract is None:
         return f"contract.write {job_id}"
-    if contract.get("review") is None:
+    elif contract.get("review") is None:
         return f"contract.review {job_id}"
-    if not review_ok(contract["review"]):
+    elif not review_ok(contract["review"]):
         if contract.get("revisions", 0) < MAX_FIX_ROUNDS:
             return f"contract.write {job_id} --fix"
         return (f"a person decides: the contract review did not pass after its revision; edit the contract in "
                 f"{job['integration']['worktree']} and commit it, then contract.review {job_id}")
-    if contract.get("red") is None:
+    elif contract.get("red") is None:
         return f"verify.run {job_id} integration --expect-red"
-    if contract["red"] is False:
+    elif contract["red"] is False:
         return "a person decides: the contract tests already pass before any build, so they prove nothing"
-    if not gate_open(job, "contract"):
+    elif not gate_open(job, "contract"):
         return f"approve {job_id} contract"
     for name, task in job["tasks"].items():
         if task["commit"] is None:
@@ -154,6 +168,8 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
     _require(plan_unchanged(job), f"{job['plan']['file']} changed after it was written")
     _require(approved(job, "plan"), "the plan is not approved")
     contract = job["contract"]
+    if capability in ("contract.write", "contract.review") or expect_red:
+        _require(contract_on(job), "this job was started without a contract")
     if capability == "contract.write":
         if not fix:
             _require(contract is None, "the contract is already written")
@@ -163,17 +179,20 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
         _require(contract.get("revisions", 0) < MAX_FIX_ROUNDS, "the contract has no revision round left")
         _require(contract.get("red") is None, "the contract was already checked red; it can no longer change")
         return
-    _require(contract is not None, "there is no contract yet")
     if capability == "contract.review":
+        _require(contract is not None, "there is no contract yet")
         _require(contract.get("red") is None, "the contract was already checked red; it can no longer change")
         return
     if capability == "verify.run" and target == "integration" and expect_red:
+        _require(contract is not None, "there is no contract yet")
         _require(review_ok(contract.get("review")), "the contract has not passed its review")
         _require(contract.get("red") is None, "the contract was already checked red")
         return
-    _require(review_ok(contract.get("review")), "the contract has not passed its review")
-    _require(contract.get("red") is True, "the contract tests were not shown to fail before the build")
-    _require(gate_open(job, "contract"), "the contract stage is not approved")
+    if contract_on(job):
+        _require(contract is not None, "there is no contract yet")
+        _require(review_ok(contract.get("review")), "the contract has not passed its review")
+        _require(contract.get("red") is True, "the contract tests were not shown to fail before the build")
+        _require(gate_open(job, "contract"), "the contract stage is not approved")
     if target != "integration" and capability in ("build.run", "verify.run", "review.run"):
         _require(target in job["tasks"], f"no task {target!r} in the plan")
         task = job["tasks"][target]
@@ -211,8 +230,7 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
 def check_approval(job, stage):
     """Raise Refused unless a person may approve `stage` now."""
     _require(not job.get("aborted"), "the job is aborted")
-    _require(stage in GATES[job["size"]], f"a {job['size']} job has no {stage} gate; gates: "
-             f"{', '.join(GATES[job['size']])}")
+    _require(stage in gates(job), f"this {job['size']} job has no {stage} gate; gates: {', '.join(gates(job))}")
     _require(job["plan"] is not None, "there is no plan to approve yet")
     _require(plan_unchanged(job), f"{job['plan']['file']} changed after it was written")
     _require(not approved(job, stage), f"the {stage} stage is already approved")

@@ -26,7 +26,7 @@ A plan lays out the work in a ```` ```qk-harness ```` block: `contract` names th
 4. `integrate.run` merges into `qk/<slug>` exactly the task commits that were checked and reviewed; a task branch that moved, or a conflict, stops the job. The integrated branch is checked and reviewed again.
 5. `pr.open` pushes `qk/<slug>` and opens one pull request. Nothing merges it.
 
-A medium job has one gate, the plan. A large job also stops after the contract, the build and the integration, and `pr.open` waits for the last approval. `status <job>` prints the next step.
+`start --no-contract` (and `eval --no-contract`) skips step 2: tasks branch from the job's base and the plan's checks define done. A medium job has one gate, the plan. A large job also stops after the contract, the build and the integration, and `pr.open` waits for the last approval. `status <job>` prints the next step.
 
 ## Measuring the harness
 

@@ -33,6 +33,7 @@ def parser():
     start.add_argument("--base", help="default: the repository's current branch")
     start.add_argument("--impl", default=DEFAULT_IMPL, help="runtime:model that writes")
     start.add_argument("--review", default=DEFAULT_REVIEW, help="runtime:model that reviews; another family")
+    start.add_argument("--no-contract", action="store_true", help="skip writing and checking a contract first")
     run = commands.add_parser("run", aliases=["resume"], help="run each next step until a gate, a block or the end")
     run.add_argument("job")
     abort = commands.add_parser("abort", help="stop a job for good; branches and worktrees stay for inspection")
@@ -42,6 +43,7 @@ def parser():
     measure.add_argument("case")
     measure.add_argument("--impl", default=DEFAULT_IMPL)
     measure.add_argument("--review", default=DEFAULT_REVIEW)
+    measure.add_argument("--no-contract", action="store_true", help="measure without the contract stage")
     status = commands.add_parser("status", help="print a job and its next step")
     status.add_argument("job")
     approve = commands.add_parser("approve", help="record a person's approval of one stage")
@@ -88,12 +90,13 @@ def main(argv=None):
                     raise capabilities.Blocked(f"{args.impl} and {args.review} are the same model family; the "
                                                "reviewer must come from another one")
                 base = args.base or gitops.git(args.repo, "symbolic-ref", "--short", "HEAD")
-                job = state.new_job(args.repo, args.task, args.size, base, args.impl, args.review)
+                job = state.new_job(args.repo, args.task, args.size, base, args.impl, args.review,
+                                    contract=not args.no_contract)
                 reply = dict(summary(job), status="done")
             elif args.command == "eval":
                 if capabilities.family(qk, args.impl) == capabilities.family(qk, args.review):
                     raise capabilities.Blocked(f"{args.impl} and {args.review} are the same model family")
-                reply = evaluate.run_eval(args.case, qk, args.impl, args.review)
+                reply = evaluate.run_eval(args.case, qk, args.impl, args.review, contract=not args.no_contract)
             elif args.command in ("run", "resume"):
                 reply = coordinator.run(args.job, qk)
             else:

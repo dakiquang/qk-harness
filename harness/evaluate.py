@@ -29,7 +29,9 @@ def report(job):
     return "\n".join([
         f"Done: {len(built)}/{len(tasks)} tasks built ({', '.join(built) or 'none'}); "
         f"{'merged into ' + integration['branch'] if integration['merged'] else 'not integrated'}.",
-        f"Evidence: contract red before build: {(job['contract'] or {}).get('red')}; integrated checks exit "
+        f"Evidence: contract red before build: "
+        f"{(job['contract'] or {}).get('red') if policy.contract_on(job) else 'no contract (switched off)'}; "
+        f"integrated checks exit "
         f"{exits or 'not run'}; integrated review findings: {len(findings)}.",
         "Not verified: anything outside the plan's checks and the contract tests; "
         f"{len(policy.serious(integration['review']))} serious review findings remain.",
@@ -64,7 +66,7 @@ def baseline(qk, case):
     return {spec: cases[case] for spec, cases in data.items() if isinstance(cases, dict) and case in cases}
 
 
-def run_eval(case, qk, impl, review):
+def run_eval(case, qk, impl, review, contract=True):
     """Measure one case; the result is also written next to the run as result.json."""
     root = state_root() / "evals" / f"{case}-{time.strftime('%Y%m%d-%H%M%S')}"
     prepared = qk.eval_prepare(case, root)
@@ -74,7 +76,7 @@ def run_eval(case, qk, impl, review):
     if not data.get("task"):
         raise EvalError(f"{case} is a review case; the harness measures cases that build something")
     task = Path(data["task"]).read_text(encoding="utf-8").strip()
-    job = state.new_job(data["workdir"], task, "medium", "main", impl, review)
+    job = state.new_job(data["workdir"], task, "medium", "main", impl, review, contract=contract)
     with state.locked(job["id"]) as locked:
         locked["eval"] = {"case": case, "dir": str(root)}
     started = time.monotonic()
@@ -101,7 +103,8 @@ def run_eval(case, qk, impl, review):
     grade = graded.data if isinstance(graded.data, dict) else {}
     if graded.code != 0 or "criteria" not in grade:
         raise EvalError(f"qk eval grade {case} failed: {graded.stderr.strip()[-300:]}")
-    result = {"case": case, "job": job["id"], "impl": impl, "review": review, "stopped": reply.get("stopped"),
+    result = {"case": case, "job": job["id"], "impl": impl, "review": review, "contract": contract,
+              "stopped": reply.get("stopped"),
               "reason": reply.get("reason", ""), "next": reply.get("next"), "graded": graded_tree,
               "criteria": {item["name"]: item["passed"] for item in grade["criteria"]},
               "details": {item["name"]: item["detail"] for item in grade["criteria"] if not item["passed"]},

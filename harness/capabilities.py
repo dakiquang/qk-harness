@@ -191,13 +191,24 @@ ONLY_THE_PLAN = ("Test only what the plan asks for. A test that requires behavio
                  "a correct implementation; do not write one.")
 
 
-def contract_write(job, qk, fix=False):
-    """Write the contract, or with `fix` revise it once from its failed review."""
+def integration_worktree(job):
+    """The integration worktree on qk/<slug>, created from the job's base on first use."""
     integration = job["integration"]
     worktree = Path(integration["worktree"])
     if not worktree.exists():
         gitops.git(job["repo"], "worktree", "add", "-q", "-b", integration["branch"], str(worktree),
                    job["base_sha"])
+    return worktree
+
+
+def build_base(job):
+    """Where task branches start: the committed contract, or the job's base when the job has no contract."""
+    return job["contract"]["commit"] if policy.contract_on(job) else job["base_sha"]
+
+
+def contract_write(job, qk, fix=False):
+    """Write the contract, or with `fix` revise it once from its failed review."""
+    worktree = integration_worktree(job)
     if not gitops.is_clean(worktree):
         raise Blocked(f"{worktree} has uncommitted changes; restore it first")
     allowed = job["plan"]["contract"]
@@ -267,8 +278,7 @@ def build_run(job, qk, name, fix=False):
     worktree = Path(task["worktree"])
     if not worktree.exists():
         worktree.parent.mkdir(exist_ok=True)
-        gitops.git(job["repo"], "worktree", "add", "-q", "-b", task["branch"], str(worktree),
-                   job["contract"]["commit"])
+        gitops.git(job["repo"], "worktree", "add", "-q", "-b", task["branch"], str(worktree), build_base(job))
     if not gitops.is_clean(worktree):
         raise Blocked(f"{worktree} has uncommitted changes; restore it before building")
     head = gitops.git(worktree, "rev-parse", "HEAD")
@@ -279,9 +289,11 @@ def build_run(job, qk, name, fix=False):
             [f"- `{check['cmd']}` exited {check['exit']}: {check['tail'][-800:]}" for check in failed]
             + [f"- {item.get('file')}:{item.get('line')} {item.get('claim')}" for item in
                policy.serious(task["review"])]) + "\n"
+    contract_rule = (f"The contract tests ({', '.join(job['contract']['files'])}) define done; do not change them."
+                     if policy.contract_on(job) else "The plan's done criteria define done.")
     prompt = f"""Read {skill(qk, 'qk-cook')} and follow it to build task `{name}` of the approved plan
 {job['plan']['file']}. Work only inside {worktree}, and change only these paths: {', '.join(task['owns'])}.
-The contract tests ({', '.join(job['contract']['files'])}) define done; do not change them.
+{contract_rule}
 If the task needs a change outside your paths, stop and report "blocked" with the reason.
 {problems}{NO_GIT}"""
     result, _ = turn(qk, job, job["impl"], worktree, prompt, write=True)
@@ -334,7 +346,7 @@ def review_run(job, qk, target):
         worktree, base, author = Path(job["integration"]["worktree"]), job["base_sha"], job["impl"]
     else:
         task = job["tasks"][target]
-        worktree, base, author = Path(task["worktree"]), job["contract"]["commit"], job["impl"]
+        worktree, base, author = Path(task["worktree"]), build_base(job), job["impl"]
     if family(qk, job["review"]) == family(qk, author):
         raise Blocked(f"the reviewer {job['review']} is the same model family as the implementer {author}")
     head = gitops.git(worktree, "rev-parse", "HEAD")
@@ -365,7 +377,7 @@ Use status "done" when the review itself completed, even if there are findings."
 
 
 def integrate_run(job, qk):
-    worktree = Path(job["integration"]["worktree"])
+    worktree = integration_worktree(job)
     if not gitops.is_clean(worktree):
         raise Blocked(f"{worktree} has uncommitted changes")
     for name, task in job["tasks"].items():
