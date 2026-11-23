@@ -267,3 +267,55 @@ class ParallelTests(Sandbox):
             cli.main(["--lock", str(self.lock), "start", "--repo", str(self.repo), "--task", "x", "--sequential"])
         job_id = json.loads(output.getvalue())["id"]
         self.assertEqual(state.load(job_id)["options"]["parallel"], 1)
+
+
+class IntegrationTests(Sandbox):
+    def ready(self, **options):
+        job_id = state.new_job(self.repo, "Add a greeting API and CLI", "medium", "main", "codex:", "claude:",
+                               **options)["id"]
+        coordinator.run(job_id, self.qk)
+        capabilities.approve(job_id, "plan")
+        return job_id
+
+    def run_job(self, job_id, agent=""):
+        with mock.patch.dict(os.environ, {"FAKE_AGENT": agent}):
+            return coordinator.run(job_id, self.qk)
+
+    def test_the_integrated_branch_gets_one_fix_round_for_located_findings(self):
+        job_id = self.ready()
+        self.assertEqual(self.run_job(job_id, "integration-findings")["stopped"], "done")
+        integration = state.load(job_id)["integration"]
+        self.assertEqual(integration["fix_rounds"], 1)
+        from test_capabilities import sh
+        self.assertIn(f"fix: integration of {state.load(job_id)['slug']}",
+                      sh(self.remote, "git", "log", "--format=%s", integration["branch"]))
+        reply = capabilities.run(job_id, "build.run", self.qk, "integration", fix=True)
+        self.assertEqual(reply["status"], "refused")
+
+    def test_findings_without_a_file_and_line_wait_for_a_person(self):
+        job_id = self.ready()
+        reply = self.run_job(job_id, "unlocated")
+        self.assertEqual(reply["stopped"], "waiting")
+        self.assertIn("serious review findings that a fix round cannot take", reply["next"])
+        self.assertEqual(state.load(job_id)["tasks"]["api"]["fix_rounds"], 0)
+
+    def test_task_reviews_can_be_switched_off(self):
+        job_id = self.ready(task_review=False)
+        self.assertEqual(self.run_job(job_id)["stopped"], "done")
+        job = state.load(job_id)
+        reviews = [entry for entry in job["log"] if entry["capability"] == "review.run"]
+        self.assertEqual(len(reviews), 1)  # the integrated branch only
+        self.assertIsNotNone(job["integration"]["review"])
+        self.assertTrue(all(task["review"] is None for task in job["tasks"].values()))
+        self.assertEqual(capabilities.run(job_id, "review.run", self.qk, "api")["reason"],
+                         "this job was started without task reviews")
+
+    def test_pr_open_needs_push_permission(self):
+        job_id = self.ready()
+        with mock.patch.dict(os.environ, {"FAKE_GH_PERMISSION": "READ"}):
+            reply = self.run_job(job_id)
+        self.assertEqual((reply["stopped"], reply["capability"]), ("blocked", "pr.open"))
+        self.assertIn("cannot push to this repository (viewerPermission=READ)", reply["reason"])
+        from test_capabilities import sh
+        self.assertEqual(sh(self.remote, "git", "branch", "--list"), "")  # nothing was pushed
+        self.assertIsNone(state.load(job_id)["pr_url"])

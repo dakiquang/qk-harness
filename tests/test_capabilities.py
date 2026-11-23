@@ -26,6 +26,7 @@ echo "$@" >> "$FAKE_GH_LOG"
 case "$1 $2" in
   "pr list") exit 0 ;;
   "pr create") echo "https://github.com/example/project/pull/7" ;;
+  "repo view") echo "${FAKE_GH_PERMISSION:-WRITE}" ;;
 esac
 '''
 
@@ -227,7 +228,7 @@ class CapabilityTests(Sandbox):
         step, _ = self.advance(job_id, until=f"build.run {job_id} api --fix", agent="broken")
         self.assertEqual(step, f"build.run {job_id} api --fix")
         step, reply = self.advance(job_id, agent="findings")
-        self.assertEqual(step, "a person decides: task api still has serious review findings after the fix round")
+        self.assertEqual(step, "a person decides: task api has serious review findings that a fix round cannot take")
         task = state.load(job_id)["tasks"]["api"]
         self.assertEqual(task["fix_rounds"], 1)
         self.assertEqual(self.run_cap(job_id, "build.run", "api", fix=True)["reason"],

@@ -311,13 +311,7 @@ def build_run(job, qk, name, fix=False):
     if not gitops.is_clean(worktree):
         raise Blocked(f"{worktree} has uncommitted changes; restore it before building")
     head = gitops.git(worktree, "rev-parse", "HEAD")
-    problems = ""
-    if fix:
-        failed = [check for check in (task["verify"] or {}).get("results", []) if check["exit"] != 0]
-        problems = "Fix these problems and nothing else:\n" + "\n".join(
-            [f"- `{check['cmd']}` exited {check['exit']}: {check['tail'][-800:]}" for check in failed]
-            + [f"- {item.get('file')}:{item.get('line')} {item.get('claim')}" for item in
-               policy.serious(task["review"])]) + "\n"
+    problems = fix_problems(task) if fix else ""
     contract_rule = (f"The contract tests ({', '.join(job['contract']['files'])}) define done; do not change them."
                      if policy.contract_on(job) else "The plan's done criteria define done.")
     prompt = f"""Read {skill(qk, 'qk-cook')} and follow it to build task `{name}` of the approved plan
@@ -405,6 +399,43 @@ Use status "done" when the review itself completed, even if there are findings."
     return {"findings": len(review["findings"]), "serious": len(policy.serious(review))}
 
 
+def fix_problems(target):
+    """The checks that failed and the located serious findings of a task or the integrated branch."""
+    failed = [check for check in (target["verify"] or {}).get("results", []) if check["exit"] != 0]
+    return "Fix these problems and nothing else:\n" + "\n".join(
+        [f"- `{check['cmd']}` exited {check['exit']}: {check['tail'][-800:]}" for check in failed]
+        + [f"- {item.get('file')}:{item.get('line')} {item.get('claim')}" for item in
+           policy.serious(target["review"])]) + "\n"
+
+
+def integration_fix(job, qk):
+    """The integrated branch's one fix round: only located problems, only inside the tasks' paths."""
+    integration = job["integration"]
+    worktree = Path(integration["worktree"])
+    if not gitops.is_clean(worktree):
+        raise Blocked(f"{worktree} has uncommitted changes; restore it first")
+    head = gitops.git(worktree, "rev-parse", "HEAD")
+    paths = sorted({path for task in job["tasks"].values() for path in task["owns"]})
+    prompt = f"""Read {skill(qk, 'qk-cook')} and follow it to fix the integrated result of the approved plan
+{job['plan']['file']}. Work only inside {worktree}, and change only these paths: {', '.join(paths)}.
+{fix_problems(integration)}If a fix needs a change outside these paths, stop and report "blocked" with the reason.
+{NO_GIT}"""
+    result, _ = turn(qk, job, job["impl"], worktree, prompt, write=True)
+    if gitops.git(worktree, "rev-parse", "HEAD") != head or \
+            gitops.git(worktree, "symbolic-ref", "-q", "HEAD") != f"refs/heads/{integration['branch']}":
+        raise Blocked(f"the worker moved {worktree} (commit or branch); only the harness commits. Inspect it")
+    files = gitops.changed_paths(worktree)
+    outside = [path for path in files if not owned(path, paths)]
+    if outside:
+        raise Blocked(f"the integration fix changed files no task owns: {', '.join(outside)}; restore {worktree}")
+    if not files:
+        raise Blocked("the integration fix produced no changes")
+    integration["commit"] = commit_all(worktree, f"fix: integration of {job['slug']}")
+    integration["verify"], integration["review"] = None, None
+    integration["fix_rounds"] = integration.get("fix_rounds", 0) + 1
+    return {"commit": integration["commit"], "files": files, "summary": result.get("summary", "")}
+
+
 # --------------------------------------------------------------- integrate and publish
 
 
@@ -435,6 +466,10 @@ def pr_open(job, qk):
     head = gitops.git(worktree, "rev-parse", "HEAD")
     if head != job["integration"]["commit"]:
         raise Blocked(f"{branch} moved since it was integrated and checked; check it again")
+    permission = gitops.gh(worktree, "repo", "view", "--json", "viewerPermission", "--jq", ".viewerPermission")
+    if permission not in ("ADMIN", "MAINTAIN", "WRITE"):
+        raise Blocked(f"the active gh account cannot push to this repository (viewerPermission={permission or 'none'}); "
+                      "run again with GH_TOKEN=\"$(gh auth token --user <account>)\" in front of the command")
     title = next((line[2:].strip() for line in policy.plan_text(job).splitlines() if line.startswith("# ")),
                  job["task"])[:72]
     body = state.job_dir(job["id"]) / "pr-body.md"
@@ -498,7 +533,9 @@ def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
             return {"status": "refused", "capability": capability, "reason": str(refused), "next": policy.next_step(job)}
         action = ACTIONS[capability]
         try:
-            if capability == "build.run":
+            if capability == "build.run" and target == "integration":
+                details = integration_fix(job, qk)
+            elif capability == "build.run":
                 details = action(job, qk, target, fix=fix)
             elif capability == "contract.write":
                 details = action(job, qk, fix=fix)

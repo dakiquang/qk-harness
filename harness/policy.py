@@ -71,15 +71,29 @@ def contract_ok(job):
     return contract is not None and review_ok(contract.get("review")) and contract.get("red") is True
 
 
-def task_ok(task):
-    return task["commit"] is not None and green(task["verify"]) and review_ok(task["review"])
+def task_review_on(job):
+    """Whether each task is reviewed on its own before integration (on unless started without it)."""
+    return job.get("options", {}).get("task_review", True)
+
+
+def task_ok(task, job=None):
+    reviewed = review_ok(task["review"]) or (job is not None and not task_review_on(job))
+    return task["commit"] is not None and green(task["verify"]) and reviewed
+
+
+def located(findings):
+    """Every finding names a file and a line, so a fix round knows exactly where to look."""
+    return all(finding.get("file") and isinstance(finding.get("line"), int) for finding in findings)
 
 
 def fixable(task):
-    """A task may get its one fix round when its checks failed or its review found serious problems."""
-    if task["fix_rounds"] >= MAX_FIX_ROUNDS or task["commit"] is None:
+    """One fix round when the checks failed, or when every serious review finding names a file and a line."""
+    if task.get("fix_rounds", 0) >= MAX_FIX_ROUNDS or task.get("commit") is None:
         return False
-    return (task["verify"] is not None and not green(task["verify"])) or bool(serious(task["review"]))
+    if task["verify"] is not None and not green(task["verify"]):
+        return True
+    findings = serious(task["review"])
+    return bool(findings) and located(findings)
 
 
 def next_step(job):
@@ -112,7 +126,7 @@ def next_step(job):
     elif not gate_open(job, "contract"):
         return f"approve {job_id} contract"
     for name, task in job["tasks"].items():
-        step = task_step(job_id, name, task)
+        step = task_step(job, name, task)
         if step:
             return step
     if not gate_open(job, "build"):
@@ -123,11 +137,14 @@ def next_step(job):
     if integration["verify"] is None:
         return f"verify.run {job_id} integration"
     if not green(integration["verify"]):
-        return "a person decides: the integrated branch fails its checks"
+        return f"build.run {job_id} integration --fix" if fixable(integration) else \
+            "a person decides: the integrated branch fails its checks after the fix round"
     if integration["review"] is None:
         return f"review.run {job_id} integration"
     if not review_ok(integration["review"]):
-        return "a person decides: the integrated branch has serious review findings"
+        return f"build.run {job_id} integration --fix" if fixable(integration) else \
+            ("a person decides: the integrated branch has serious review findings that a fix round cannot take "
+             "(no file and line, or the round is used)")
     if not gate_open(job, "integrate"):
         return f"approve {job_id} integrate"
     if job.get("eval"):
@@ -137,8 +154,9 @@ def next_step(job):
     return f"done: a person reviews and merges {job['pr_url']}"
 
 
-def task_step(job_id, name, task):
-    """What one task needs next, or None when it is built, checked and reviewed."""
+def task_step(job, name, task):
+    """What one task needs next, or None when it is built, checked and (unless switched off) reviewed."""
+    job_id = job["id"]
     if task.get("running"):
         return f"wait: task {name} is running {task['running']['capability']}"
     if task["commit"] is None:
@@ -148,11 +166,13 @@ def task_step(job_id, name, task):
     if not green(task["verify"]):
         return f"build.run {job_id} {name} --fix" if fixable(task) else \
             f"a person decides: task {name} still fails its checks after the fix round"
+    if not task_review_on(job):
+        return None
     if task["review"] is None:
         return f"review.run {job_id} {name}"
     if not review_ok(task["review"]):
         return f"build.run {job_id} {name} --fix" if fixable(task) else \
-            f"a person decides: task {name} still has serious review findings after the fix round"
+            f"a person decides: task {name} has serious review findings that a fix round cannot take"
     return None
 
 
@@ -163,7 +183,7 @@ def task_steps(job):
                 or first.startswith(("wait: task ", "a person decides: task ")))
     if not in_tasks:
         return []
-    steps = [task_step(job["id"], name, task) for name, task in job["tasks"].items()]
+    steps = [task_step(job, name, task) for name, task in job["tasks"].items()]
     return [step for step in steps if step and step.split()[0] in CAPABILITIES]
 
 
@@ -228,10 +248,11 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
         _require(task["commit"] is not None, f"task {target} is not built")
         if capability == "verify.run":
             return
+        _require(task_review_on(job), "this job was started without task reviews")
         _require(green(task["verify"]), f"task {target} has not passed its checks")
         return
-    _require(capability != "build.run", "build.run needs a task name")
-    _require(all(task_ok(task) for task in job["tasks"].values()),
+    _require(capability != "build.run" or target == "integration", "build.run needs a task name")
+    _require(all(task_ok(task, job) for task in job["tasks"].values()),
              "every task must be built, pass its checks and pass its review first")
     _require(gate_open(job, "build"), "the build stage is not approved")
     _require(not any(task.get("running") for task in job["tasks"].values()), "a task is still running")
@@ -240,6 +261,10 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
         _require(not integration["merged"], "the tasks are already integrated")
         return
     _require(integration["merged"], "the tasks are not integrated")
+    if capability == "build.run":
+        _require(fix, "build.run on the integration branch is only its --fix round")
+        _require(fixable(integration), "the integrated branch has no fix round left or nothing a fix round can take")
+        return
     if capability == "verify.run":
         return
     _require(green(integration["verify"]), "the integrated branch has not passed its checks")
@@ -263,7 +288,7 @@ def check_approval(job, stage):
         _require(contract_ok(job), "the contract must pass its review and be shown red first")
     elif stage == "build":
         _require(contract_ok(job) and gate_open(job, "contract") and job["tasks"]
-                 and all(task_ok(task) for task in job["tasks"].values()),
+                 and all(task_ok(task, job) for task in job["tasks"].values()),
                  "every task must be built, pass its checks and pass its review first")
     elif stage == "integrate":
         integration = job["integration"]

@@ -10,6 +10,8 @@ It recognises which capability sent the prompt and acts like a cooperative agent
 - `findings`: reviews report one important finding
 - `no-verify`, `overlap`: the plan lacks a qk-verify block, or its tasks own the same path
 - `contract-outside`: the contract also writes a file outside its test paths
+- `integration-findings`: the integration review finds a located problem until the integration fix round ran
+- `unlocated`: task reviews report a serious finding with no file or line
 - `contract-once`, `contract-twice`: the contract review finds an important problem until the contract is revised,
   or every time
 """
@@ -75,7 +77,12 @@ if "build task `" in prompt:
         deadline = time.time() + float(__import__("os").environ.get("FAKE_BARRIER_WAIT", "10"))
         while len(list(Path(barrier).glob("*.started"))) < 2 and time.time() < deadline:
             time.sleep(0.05)
-        Path(barrier, f"{task}.together").write_text(str(len(list(Path(barrier).glob("*.started"))) >= 2))
+        running = [path.stem for path in Path(barrier).glob("*.started")]
+        if len(running) >= 2:  # an overlap is true for every build that took part, whoever sees it first
+            for name in running:
+                Path(barrier, f"{name}.together").write_text("True")
+        elif not Path(barrier, f"{task}.together").exists():
+            Path(barrier, f"{task}.together").write_text("False")
         __import__("atexit").register(Path(barrier, f"{task}.started").unlink)  # gone once this build ends
     package = cwd / "src" / task
     package.mkdir(parents=True, exist_ok=True)
@@ -102,6 +109,15 @@ if "review of a test contract" in prompt and ("contract-twice" in flags or "cont
                                               "# revised" not in (cwd / "tests" / "test_contract.py").read_text()):
     done("reviewed", [{"severity": "important", "file": "tests/test_contract.py", "line": 1,
                        "claim": "tests a behaviour the plan does not state", "fix": "drop it"}])
+if "to fix the integrated result" in prompt:  # the integration fix round
+    (cwd / "src" / "api" / "fixed.py").write_text("FIXED = True\n")
+    done("integration fixed")
+if "Independent read-only review" in prompt and "review-integration.diff" in prompt and \
+        "integration-findings" in flags and not (cwd / "src" / "api" / "fixed.py").exists():
+    done("reviewed", [{"severity": "important", "file": "src/api/__init__.py", "line": 1, "claim": "integration bug"}])
+if "Independent read-only review" in prompt and "unlocated" in flags and "Full diff:" in prompt \
+        and "review-integration.diff" not in prompt:  # task reviews only
+    done("reviewed", [{"severity": "important", "file": "", "claim": "something is wrong somewhere"}])
 if "Independent read-only review" in prompt:
     findings = [{"severity": "important", "file": "src/api/__init__.py", "line": 2, "claim": "fake finding"}] \
         if "findings" in flags else []
