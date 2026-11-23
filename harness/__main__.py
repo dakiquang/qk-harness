@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from harness import capabilities, coordinator, evaluate, gitops, policy, qk_cli, state
+from harness import __version__, capabilities, coordinator, evaluate, gitops, policy, qk_cli, state
 
 
 LOCK = Path(__file__).resolve().parent.parent / "qk.lock"
@@ -17,7 +17,8 @@ def parser():
     # --lock works before or after the command name; after it wins.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--lock", dest="lock", help="default: qk.lock next to the harness")
-    root = argparse.ArgumentParser(prog="qk-harness")
+    root = argparse.ArgumentParser(prog="qk-harness", description="Run multi-task work on top of qk's CLI contract.")
+    root.add_argument("--version", action="version", version=f"qk-harness {__version__}")
     root.add_argument("--lock", dest="root_lock", help="default: qk.lock next to the harness")
     commands = root.add_subparsers(dest="command", required=True)
     add = commands.add_parser

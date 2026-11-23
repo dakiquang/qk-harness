@@ -196,6 +196,22 @@ class QkCliTests(unittest.TestCase):
         self.assertIn("reports contract 2", refused.stderr)
 
 
+class EntryPointTests(unittest.TestCase):
+    setUp, write_lock = QkCliTests.setUp, QkCliTests.write_lock  # the same stand-in qk, without its tests
+
+    def test_the_qk_harness_command_works_through_a_symlink(self):
+        link = self.tmp / "bin" / "qk-harness"
+        link.parent.mkdir()
+        link.symlink_to(ROOT / "bin" / "qk-harness")
+        env = dict(os.environ, QK_HARNESS_STATE_DIR=str(self.state))
+        done = subprocess.run([str(link), "--lock", str(self.write_lock()), "doctor"], cwd=str(self.tmp),
+                              capture_output=True, text=True, env=env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout)["qk"], "9.9.9")
+        version = subprocess.run([str(link), "--version"], capture_output=True, text=True)
+        self.assertEqual(version.stdout.strip(), "qk-harness 0.1.0")
+
+
 class BoundaryTests(unittest.TestCase):
     def test_only_qk_cli_runs_qk_and_only_gitops_runs_other_processes(self):
         for path in sorted((ROOT / "harness").glob("*.py")):
