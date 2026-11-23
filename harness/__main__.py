@@ -9,7 +9,7 @@ from harness import capabilities, coordinator, evaluate, gitops, policy, qk_cli,
 
 
 LOCK = Path(__file__).resolve().parent.parent / "qk.lock"
-DEFAULT_IMPL = "codex:"
+DEFAULT_IMPL = "codex:gpt-6.1-terra"
 DEFAULT_REVIEW = "claude:"
 
 
