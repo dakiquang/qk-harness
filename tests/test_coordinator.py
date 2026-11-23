@@ -57,6 +57,35 @@ class CoordinatorTests(Sandbox):
         tasks = state.load(job_id)["tasks"]
         self.assertEqual((tasks["api"]["fix_rounds"], tasks["cli"]["fix_rounds"]), (1, 0))
 
+    def test_a_failed_contract_review_gets_one_revision_then_a_person_decides(self):
+        job_id = self.new()
+        self.run_job(job_id)
+        capabilities.approve(job_id, "plan")
+        self.assertEqual(self.run_job(job_id, agent="contract-once")["stopped"], "done")
+        contract = state.load(job_id)["contract"]
+        self.assertEqual((contract["revisions"], len(contract["earlier_reviews"])), (1, 1))
+        self.assertIn("test: revise the contract", self.sh_log(job_id))
+        other = self.new()
+        self.run_job(other)
+        capabilities.approve(other, "plan")
+        reply = self.run_job(other, agent="contract-twice")
+        self.assertEqual(reply["stopped"], "waiting")
+        self.assertIn("did not pass after its revision", reply["next"])
+        again = capabilities.run(other, "contract.write", self.qk, fix=True)
+        self.assertEqual((again["status"], again["reason"]), ("refused", "the contract has no revision round left"))
+
+    def test_the_contract_revision_needs_a_failed_review(self):
+        job_id = self.new()
+        self.run_job(job_id)
+        capabilities.approve(job_id, "plan")
+        self.advance(job_id, until=f"contract.review {job_id}")
+        reply = capabilities.run(job_id, "contract.write", self.qk, fix=True)
+        self.assertEqual((reply["status"], reply["reason"]), ("refused", "the contract has no failed review to fix"))
+
+    def sh_log(self, job_id):
+        from test_capabilities import sh
+        return sh(self.repo, "git", "log", "--format=%s", state.load(job_id)["integration"]["branch"])
+
     def test_an_aborted_job_refuses_every_step(self):
         job_id = self.new()
         self.run_job(job_id)

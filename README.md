@@ -21,7 +21,7 @@ Early work. What exists today:
 A plan lays out the work in a ```` ```qk-harness ```` block: `contract` names the test paths the contract may write, and each task owns repository paths no other task (and not the contract) owns and lists the commands that check it alone; the plan's ```` ```qk-verify ```` block checks the whole result. Agents see only their own worktree and a shared directory with the plan and diffs, never another worktree. Then:
 
 1. `plan.write`, then a person runs `approve <job> plan`.
-2. `contract.write` writes tests that define done and commits them on `qk/<slug>`; `contract.review` has a model from another family review them; `verify.run <job> integration --expect-red` must see them fail before any build.
+2. `contract.write` writes tests that define done and commits them on `qk/<slug>`; `contract.review` has a model from another family review them; a failed review gets one `contract.write --fix` round from the review's findings, then a person decides; `verify.run <job> integration --expect-red` must see them fail before any build. A test that asks for behaviour the plan does not state counts as an important finding.
 3. `build.run <job> <task>` builds each task on its own branch `qk/<slug>--<task>`. A worker that commits, switches branch or changes a path it does not own is refused. `verify.run` and `review.run` check each task; a task gets at most one `--fix` round.
 4. `integrate.run` merges into `qk/<slug>` exactly the task commits that were checked and reviewed; a task branch that moved, or a conflict, stops the job. The integrated branch is checked and reviewed again.
 5. `pr.open` pushes `qk/<slug>` and opens one pull request. Nothing merges it.

@@ -187,16 +187,33 @@ def commit_all(worktree, message):
     return gitops.git(worktree, "rev-parse", "HEAD")
 
 
-def contract_write(job, qk):
+ONLY_THE_PLAN = ("Test only what the plan asks for. A test that requires behaviour the plan does not state can fail "
+                 "a correct implementation; do not write one.")
+
+
+def contract_write(job, qk, fix=False):
+    """Write the contract, or with `fix` revise it once from its failed review."""
     integration = job["integration"]
     worktree = Path(integration["worktree"])
     if not worktree.exists():
         gitops.git(job["repo"], "worktree", "add", "-q", "-b", integration["branch"], str(worktree),
                    job["base_sha"])
+    if not gitops.is_clean(worktree):
+        raise Blocked(f"{worktree} has uncommitted changes; restore it first")
     allowed = job["plan"]["contract"]
-    prompt = f"""Write the contract for the approved plan {job['plan']['file']}: tests, and only tests, that pass when
+    if fix:
+        findings = "\n".join(f"- [{item.get('severity')}] {item.get('file')}:{item.get('line')} {item.get('claim')} "
+                             f"Fix: {item.get('fix', '')}" for item in job["contract"]["review"]["findings"])
+        prompt = f"""Revise the contract for the approved plan {job['plan']['file']} in {worktree}. An independent review
+found these problems; fix each blocker and important one, and the others where the fix is small:
+{findings}
+The tests must still pass when the plan's done criteria are met and fail now, before any task is built.
+{ONLY_THE_PLAN} Write only under these paths: {', '.join(allowed)}. Do not implement the feature.
+List the test files you changed in "files". {NO_GIT}"""
+    else:
+        prompt = f"""Write the contract for the approved plan {job['plan']['file']}: tests, and only tests, that pass when
 the plan's done criteria are met and fail now, before any task is built. Work only inside {worktree}, and write
-only under these paths: {', '.join(allowed)}. Do not implement the feature.
+only under these paths: {', '.join(allowed)}. Do not implement the feature. {ONLY_THE_PLAN}
 List the test files you wrote in "files". {NO_GIT}"""
     result, _ = turn(qk, job, job["impl"], worktree, prompt, write=True)
     files = gitops.changed_paths(worktree)
@@ -205,8 +222,17 @@ List the test files you wrote in "files". {NO_GIT}"""
     outside = [path for path in files if not owned(path, allowed)]
     if outside:
         raise Blocked(f"the contract changed files outside its paths: {', '.join(outside)}; restore {worktree}")
+    if fix:
+        contract = job["contract"]
+        contract["commit"] = commit_all(worktree, f"test: revise the contract for {job['slug']}")
+        contract["files"] = sorted(set(contract["files"]) | set(files))
+        contract["revisions"] = contract.get("revisions", 0) + 1
+        contract["earlier_reviews"] = contract.get("earlier_reviews", []) + [contract["review"]]
+        contract["review"] = None
+        return {"commit": contract["commit"], "files": files, "summary": result.get("summary", "")}
     commit = commit_all(worktree, f"test: contract for {job['slug']}")
-    job["contract"] = {"commit": commit, "files": files, "writer": job["impl"], "review": None, "red": None}
+    job["contract"] = {"commit": commit, "files": files, "writer": job["impl"], "review": None, "red": None,
+                       "revisions": 0}
     return {"commit": commit, "files": files, "summary": result.get("summary", "")}
 
 
@@ -220,6 +246,8 @@ def contract_review(job, qk):
 Approved plan: {job['plan']['file']}. Contract files in {worktree}: {', '.join(contract['files'])}.
 Check that the tests cover every done criterion in the plan, would fail before the work is done, cannot pass by
 accident (for example empty or always-true assertions), and test behaviour rather than implementation details.
+A test that requires behaviour the plan does not state is important, not a nit: it can fail a correct
+implementation.
 Put each problem in "findings" as {{"severity": "blocker|important|nit", "file": "...", "line": N,
 "claim": "...", "fix": "..."}}. Use status "done" when the review itself completed, even with findings."""
     result, _ = turn(qk, job, job["review"], worktree, prompt, write=False)
@@ -392,6 +420,8 @@ def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
         try:
             if capability == "build.run":
                 details = action(job, qk, target, fix=fix)
+            elif capability == "contract.write":
+                details = action(job, qk, fix=fix)
             elif capability == "verify.run":
                 details = action(job, qk, target, expect_red=expect_red)
             elif capability == "review.run":

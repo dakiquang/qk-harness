@@ -10,6 +10,8 @@ It recognises which capability sent the prompt and acts like a cooperative agent
 - `findings`: reviews report one important finding
 - `no-verify`, `overlap`: the plan lacks a qk-verify block, or its tasks own the same path
 - `contract-outside`: the contract also writes a file outside its test paths
+- `contract-once`, `contract-twice`: the contract review finds an important problem until the contract is revised,
+  or every time
 """
 
 import json
@@ -73,6 +75,14 @@ if "build task `" in prompt:
         subprocess.run(["git", "-c", "user.name=w", "-c", "user.email=w@example.invalid", "commit", "-qm", "worker"],
                        cwd=str(cwd), check=True)
     done(f"built {task}")
+if prompt.startswith("Revise the contract"):
+    contract = cwd / "tests" / "test_contract.py"
+    contract.write_text(contract.read_text() + "# revised\n")
+    done("contract revised")
+if "review of a test contract" in prompt and ("contract-twice" in flags or "contract-once" in flags and
+                                              "# revised" not in (cwd / "tests" / "test_contract.py").read_text()):
+    done("reviewed", [{"severity": "important", "file": "tests/test_contract.py", "line": 1,
+                       "claim": "tests a behaviour the plan does not state", "fix": "drop it"}])
 if "Independent read-only review" in prompt:
     findings = [{"severity": "important", "file": "src/api/__init__.py", "line": 2, "claim": "fake finding"}] \
         if "findings" in flags else []

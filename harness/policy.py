@@ -87,7 +87,9 @@ def next_step(job):
     if contract.get("review") is None:
         return f"contract.review {job_id}"
     if not review_ok(contract["review"]):
-        return (f"a person decides: the contract review did not pass; edit the contract in "
+        if contract.get("revisions", 0) < MAX_FIX_ROUNDS:
+            return f"contract.write {job_id} --fix"
+        return (f"a person decides: the contract review did not pass after its revision; edit the contract in "
                 f"{job['integration']['worktree']} and commit it, then contract.review {job_id}")
     if contract.get("red") is None:
         return f"verify.run {job_id} integration --expect-red"
@@ -153,7 +155,13 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
     _require(approved(job, "plan"), "the plan is not approved")
     contract = job["contract"]
     if capability == "contract.write":
-        _require(contract is None, "the contract is already written")
+        if not fix:
+            _require(contract is None, "the contract is already written")
+            return
+        _require(contract is not None and contract.get("review") is not None
+                 and not review_ok(contract["review"]), "the contract has no failed review to fix")
+        _require(contract.get("revisions", 0) < MAX_FIX_ROUNDS, "the contract has no revision round left")
+        _require(contract.get("red") is None, "the contract was already checked red; it can no longer change")
         return
     _require(contract is not None, "there is no contract yet")
     if capability == "contract.review":

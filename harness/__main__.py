@@ -52,8 +52,8 @@ def parser():
         command.add_argument("job")
         if name in ("build.run", "verify.run", "review.run"):
             command.add_argument("target", help="a task name" + ("" if name == "build.run" else ", or integration"))
-        if name == "build.run":
-            command.add_argument("--fix", action="store_true", help="the task's one fix round")
+        if name in ("build.run", "contract.write"):
+            command.add_argument("--fix", action="store_true", help="the one fix round (contract: from its review)")
         if name == "verify.run":
             command.add_argument("--expect-red", action="store_true",
                                  help="check that the contract tests fail before any build")
