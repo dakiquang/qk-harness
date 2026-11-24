@@ -88,8 +88,9 @@ def located(findings):
 
 
 def fixable(task):
-    """One fix round when the checks failed, or when every serious review finding names a file and a line."""
-    if task.get("fix_rounds", 0) >= MAX_FIX_ROUNDS or task.get("commit") is None:
+    """One fix round, plus any a person granted, when the checks failed or when every serious review finding names
+    a file and a line."""
+    if task.get("fix_rounds", 0) >= MAX_FIX_ROUNDS + task.get("granted_rounds", 0) or task.get("commit") is None:
         return False
     if task["verify"] is not None and not green(task["verify"]):
         return True
@@ -189,7 +190,8 @@ def _next_step(job):
         return "a person decides: the contract tests already pass before any build, so they prove nothing"
     elif not gate_open(job, "contract"):
         return f"approve {job_id} contract"
-    steps = [step for step in (task_step(job, name, task) for name, task in job["tasks"].items()) if step]
+    steps = [step for step in (task_step(job, name, task) for name, task in job["tasks"].items()) if step] \
+        if not job["integration"]["merged"] else []  # once integrated, only the integrated branch moves on
     if steps:
         # A usage-limit wait never hides a decision another task needs from a person.
         return next((step for step in steps if step.startswith("a person decides")), steps[0]) \
@@ -270,6 +272,23 @@ class Refused(Exception):
     """A capability may not run now; the message says why."""
 
 
+def check_grant(job, target):
+    """Raise Refused unless a person may give `target` (a task name or "integration") one more fix round: its own
+    round is used and a fix round could take what is still wrong."""
+    _require(not job.get("aborted"), "the job is aborted")
+    _require(not job.get("pr_url"), "the pull request is already open")
+    _require(job["plan"] is not None and plan_unchanged(job), "the plan changed after it was written; restore it first")
+    _require(target == "integration" or target in job["tasks"], f"no task {target!r} in the plan")
+    _require(target == "integration" or not job["integration"]["merged"],
+             "the tasks are already integrated; only the integrated branch can take a fix round now")
+    item = job["integration"] if target == "integration" else job["tasks"][target]
+    label = "the integrated branch" if target == "integration" else f"task {target}"
+    _require(not item.get("running"), f"{label} is running")
+    _require(not fixable(item), f"{label} can still take a fix round")
+    _require(fixable(dict(item, granted_rounds=item.get("granted_rounds", 0) + 1)),
+             f"{label} has nothing a fix round can take")
+
+
 def check(job, capability, target=None, *, expect_red=False, fix=False):
     """Raise Refused unless `capability` may run now on `target` (a task name or "integration")."""
     _require(capability in CAPABILITIES, f"unknown capability {capability!r}")
@@ -314,15 +333,20 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
         running = task.get("running")
         _require(not running, f"task {target} is already running {running and running['capability']} "
                               f"since {running and running['since']}")
+        not_merged = (not job["integration"]["merged"],
+                      "the tasks are already integrated; work on the integrated branch")
         if capability == "build.run":
+            _require(*not_merged)
             _require(task["commit"] is None or fix, f"task {target} is already built")
             if fix:
                 _require(fixable(task), f"task {target} has no fix round left or nothing to fix")
             return
         _require(task["commit"] is not None, f"task {target} is not built")
         if capability == "verify.run":
+            _require(*not_merged)
             return
         _require(task_review_on(job), "this job was started without task reviews")
+        _require(*not_merged)
         _require(green(task["verify"]), f"task {target} has not passed its checks")
         return
     _require(capability != "build.run" or target == "integration", "build.run needs a task name")

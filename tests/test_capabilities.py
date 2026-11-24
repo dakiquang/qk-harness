@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import fake_qk  # noqa: E402
-from harness import __main__ as cli, capabilities, gitops, policy, qk_cli, state  # noqa: E402
+from harness import __main__ as cli, capabilities, coordinator, gitops, policy, qk_cli, state  # noqa: E402
 
 
 AGENT = Path(__file__).resolve().parent / "fake_agent.py"
@@ -233,6 +233,59 @@ class CapabilityTests(Sandbox):
         self.assertEqual(task["fix_rounds"], 1)
         self.assertEqual(self.run_cap(job_id, "build.run", "api", fix=True)["reason"],
                          "task api has no fix round left or nothing to fix")
+
+    def test_a_person_can_grant_one_more_fix_round(self):
+        job_id = self.new()
+        self.advance(job_id)
+        capabilities.approve(job_id, "plan")
+        self.advance(job_id, until=f"build.run {job_id} api --fix", agent="broken")
+        step, _ = self.advance(job_id, agent="findings")
+        self.assertTrue(step.startswith("a person decides: task api"), step)
+        for target, reason in (("nope", "no task 'nope' in the plan"),
+                               ("cli", "task cli has nothing a fix round can take"),
+                               ("integration", "the integrated branch has nothing a fix round can take")):
+            with self.subTest(target=target):
+                reply = capabilities.grant_fix(job_id, target)
+                self.assertEqual((reply["status"], reply["reason"]), ("refused", reason))
+        reply = capabilities.grant_fix(job_id, "api", reason="the findings are worth one more try")
+        self.assertEqual((reply["status"], reply["next"]), ("done", f"build.run {job_id} api --fix"))
+        job = state.load(job_id)
+        self.assertEqual(job["log"][-1]["capability"], "grant-fix api")
+        self.assertEqual(job["log"][-1]["reason"], "the findings are worth one more try")
+        self.assertEqual(capabilities.grant_fix(job_id, "api")["reason"], "task api can still take a fix round")
+        step, reply = self.advance(job_id, agent="refix")
+        self.assertNotIn("a person decides", step, reply)
+        task = state.load(job_id)["tasks"]["api"]
+        self.assertEqual((task["fix_rounds"], task["granted_rounds"]), (2, 1))
+        self.assertTrue(policy.review_ok(task["review"]))
+
+    def test_grant_fix_is_refused_when_the_job_cannot_use_it(self):
+        job_id = self.new()
+        self.advance(job_id)
+        capabilities.approve(job_id, "plan")
+        self.advance(job_id, until=f"build.run {job_id} api --fix", agent="broken")
+        self.advance(job_id, agent="findings")
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(["grant-fix", job_id, "cli"]), 2)
+        self.assertEqual(json.loads(out.getvalue())["status"], "refused")
+        plan = Path(state.load(job_id)["plan"]["file"])
+        text = plan.read_text()
+        plan.write_text(text + "\nchanged\n")
+        self.assertEqual(capabilities.grant_fix(job_id, "api")["reason"],
+                         "the plan changed after it was written; restore it first")
+        plan.write_text(text)
+        with state.locked(job_id) as job:
+            job["integration"]["merged"] = True
+        self.assertEqual(capabilities.grant_fix(job_id, "api")["reason"],
+                         "the tasks are already integrated; only the integrated branch can take a fix round now")
+        with state.locked(job_id) as job:  # a round granted before integration cannot be spent after it
+            job["tasks"]["api"]["granted_rounds"] = 1
+            self.assertFalse(policy.next_step(job).startswith(f"build.run {job_id} api"), policy.next_step(job))
+        for capability in ("build.run", "verify.run", "review.run"):
+            self.assertEqual(self.run_cap(job_id, capability, "api", fix=capability == "build.run")["reason"],
+                             "the tasks are already integrated; work on the integrated branch")
+        coordinator.abort(job_id, "enough")
+        self.assertEqual(capabilities.grant_fix(job_id, "api")["reason"], "the job is aborted")
 
     def test_plans_must_be_checkable_and_split_cleanly(self):
         for deviation, reason in (("no-verify", "no non-empty ```qk-verify``` block"),

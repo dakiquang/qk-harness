@@ -68,6 +68,10 @@ def parser():
     approve = commands.add_parser("approve", help="record a person's approval of one stage")
     approve.add_argument("job")
     approve.add_argument("stage", choices=("plan", "contract", "build", "integrate"))
+    grant = commands.add_parser("grant-fix", help="give a task or the integrated branch one more fix round")
+    grant.add_argument("job")
+    grant.add_argument("target", help="a task name or integration")
+    grant.add_argument("--reason", default="", help="why; kept in the job's log")
     for name in policy.CAPABILITIES:
         command = commands.add_parser(name, help="capability: changes " + policy.CAPABILITIES[name])
         command.add_argument("job")
@@ -109,6 +113,8 @@ def main(argv=None):
             reply = summary(state.load(args.job))
         elif args.command == "approve":
             reply = capabilities.approve(args.job, args.stage)
+        elif args.command == "grant-fix":
+            reply = capabilities.grant_fix(args.job, args.target, args.reason)
         elif args.command == "abort":
             reply = coordinator.abort(args.job, args.reason)
             if reply["status"] == "done":  # the abort stands even when qk cannot record it

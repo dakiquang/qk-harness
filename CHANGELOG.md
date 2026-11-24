@@ -26,3 +26,5 @@ All notable changes to this project are documented here. The format follows
   job or using a fix round; tasks on other runtimes go on. `run --until HH:MM` (or `--wait-limits`) sleeps until
   the reset and carries on, with macOS notifications; `status` and the ledger record show the limit. Needs qk
   v0.10.0, now pinned in `qk.lock`.
+- `grant-fix JOB TARGET [--reason TEXT]`: a person gives a task or the integrated branch one more fix round after
+  its own is used; refused unless a fix round could take what is still wrong. The job's log keeps the decision.

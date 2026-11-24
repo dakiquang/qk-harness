@@ -12,6 +12,7 @@ It recognises which capability sent the prompt and acts like a cooperative agent
 - `contract-outside`: the contract also writes a file outside its test paths
 - `integration-findings`: the integration review finds a located problem until the integration fix round ran
 - `unlocated`: task reviews report a serious finding with no file or line
+- `refix`: every fix build of a task also adds a line to `src/<task>/fixes.txt`, so a later round changes files
 - `contract-once`, `contract-twice`: the contract review finds an important problem until the contract is revised,
   or every time
 """
@@ -91,6 +92,9 @@ if "build task `" in prompt:
         value = "'wrong'"
     function = "greet" if task == "api" else "name"
     (package / "__init__.py").write_text(f"def {function}():\n    return {value}\n")
+    if "refix" in flags and "Fix these problems" in prompt:
+        with open(package / "fixes.txt", "a") as fixes:
+            fixes.write("fixed\n")
     owned_test = re.search(r"change only these paths: ([^\n]*)", prompt)
     if owned_test and f"tests/test_{task}.py" in owned_test.group(1):  # the task writes its own test
         (cwd / "tests" / f"test_{task}.py").write_text("import unittest\n")

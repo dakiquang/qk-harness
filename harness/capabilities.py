@@ -612,3 +612,16 @@ def approve(job_id, stage):
         job["approvals"][stage] = {"at": now(), "plan_sha256": job["plan"]["sha256"]}
         record(job, f"approve {stage}", "done")
         return {"status": "done", "stage": stage, "reason": "", "next": policy.next_step(job)}
+
+
+def grant_fix(job_id, target, reason=""):
+    """A person's decision to give a task or the integrated branch one more fix round after its own is used."""
+    with state.locked(job_id) as job:
+        try:
+            policy.check_grant(job, target)
+        except policy.Refused as refused:
+            return {"status": "refused", "target": target, "reason": str(refused), "next": policy.next_step(job)}
+        item = job["integration"] if target == "integration" else job["tasks"][target]
+        item["granted_rounds"] = item.get("granted_rounds", 0) + 1
+        record(job, f"grant-fix {target}", "done", reason)
+        return {"status": "done", "target": target, "reason": "", "next": policy.next_step(job)}
