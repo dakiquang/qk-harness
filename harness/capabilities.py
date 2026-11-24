@@ -319,10 +319,14 @@ def build_run(job, qk, name, fix=False):
     problems = fix_problems(task) if fix else ""
     contract_rule = (f"The contract tests ({', '.join(job['contract']['files'])}) define done; do not change them."
                      if policy.contract_on(job) else "The plan's done criteria define done.")
+    own_checks = (f"This task is checked only by: {'; '.join(task['checks'])}. Tests of the plan's other tasks may "
+                  "fail in this worktree until the tasks are integrated; that is expected, not a reason to stop.\n"
+                  if task["checks"] else "")
     prompt = f"""Read {skill(qk, 'qk-cook')} and follow it to build task `{name}` of the approved plan
 {job['plan']['file']}. Work only inside {worktree}, and change only these paths: {', '.join(task['owns'])}.
 {contract_rule}
-If the task needs a change outside your paths, stop and report "blocked" with the reason.
+{own_checks}If a test you would add or change lies outside your paths, leave it and name it in your summary instead.
+If the task itself needs a change outside your paths, stop and report "blocked" with the reason.
 {problems}{NO_GIT}"""
     result, _ = turn(qk, job, task.get("impl_spec", job["impl"]), worktree, prompt, write=True)
     if gitops.git(worktree, "rev-parse", "HEAD") != head or \

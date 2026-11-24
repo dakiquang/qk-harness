@@ -261,6 +261,26 @@ class CapabilityTests(Sandbox):
             for worktree in worktrees:
                 self.assertNotIn(directory, [worktree, *worktree.parents], (directory, worktree))
 
+    def test_build_prompts_name_the_tasks_own_checks(self):
+        log = self.tmp / "qk-calls.jsonl"
+        job_id = self.new()
+        with mock.patch.dict(os.environ, {"FAKE_QK_LOG": str(log)}):
+            self.advance(job_id)
+            capabilities.approve(job_id, "plan")
+            self.advance(job_id)
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        tasks = state.load(job_id)["tasks"]
+        for name, task in tasks.items():
+            with self.subTest(task=name):
+                prompts = [call["stdin"] for call in calls if call["argv"][:2] == ["agent", "run"]
+                           and f"to build task `{name}`" in call["stdin"]]
+                self.assertTrue(prompts)
+                self.assertTrue(task["checks"])
+                for prompt in prompts:
+                    self.assertIn(f"This task is checked only by: {'; '.join(task['checks'])}.", prompt)
+                    self.assertIn("other tasks may fail in this worktree", prompt)
+                    self.assertIn("name it in your summary instead", prompt)
+
     def test_contract_writes_only_under_its_paths(self):
         job_id = self.new()
         self.advance(job_id)
