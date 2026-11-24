@@ -29,13 +29,16 @@ qk-harness run JOB          # viết plan rồi dừng chờ bạn
 qk-harness approve JOB plan
 qk-harness run JOB          # hợp đồng, các task, tích hợp, review, pull request
 qk-harness status JOB
+qk-harness status --line    # mọi job chưa xong, mỗi job một dòng
 ```
+
+Qua đêm, `qk-harness run JOB --until 07:00` chờ hạn mức mở lại thay vì dừng. Khi task đã dùng hết vòng sửa duy nhất, `qk-harness grant-fix JOB TASK` cho nó thêm một vòng; xem [các lệnh hằng ngày](docs/vi/guide.md#chạy-và-chạy-tiếp).
 
 `run` dừng ở mỗi cổng, ở bước bị chặn, và khi cần người quyết; `status` và mọi câu trả lời đều nêu bước tiếp theo. [Hướng dẫn](docs/vi/guide.md) giải thích từng capability, các cổng, tuỳ chọn và giới hạn.
 
 ## Trạng thái
 
-Phiên bản 0.1.0. Đã build và test với một qk giả; đã đo với agent thật trên hai bài eval một task của qk ([số đo](docs/vi/measurements.md)). Chưa chạy agent thật trên việc có nhiều task.
+Phiên bản 0.1.0. Đã build và test với một qk giả; đã đo với agent thật trên hai bài eval một task của qk ([số đo](docs/vi/measurements.md)). Một job thật có hai task đã đi tới pull request, với một vòng sửa do người cấp thêm.
 
 ## Test
 

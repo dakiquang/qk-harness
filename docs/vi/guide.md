@@ -43,8 +43,8 @@ Chồng đường dẫn và họ model của các vai được kiểm ngay khi v
 | `plan.write` | không gì | checkout sạch; plan chưa duyệt |
 | `contract.write [--fix]` | worktree tích hợp, chỉ trong đường dẫn hợp đồng | plan đã duyệt; `--fix` một lần sau review hợp đồng thất bại |
 | `contract.review` | không gì | có hợp đồng; reviewer khác họ |
-| `build.run TASK [--fix]` | worktree riêng của task, chỉ đường dẫn của nó | hợp đồng đã review và đã đỏ (job lớn: đã duyệt); `--fix` một lần |
-| `build.run integration --fix` | worktree tích hợp, chỉ đường dẫn của các task | nhánh tích hợp hỏng kiểm hoặc review; một lần |
+| `build.run TASK [--fix]` | worktree riêng của task, chỉ đường dẫn của nó | hợp đồng đã review và đã đỏ (job lớn: đã duyệt); `--fix` một lần, cộng một lần cho mỗi `grant-fix` |
+| `build.run integration --fix` | worktree tích hợp, chỉ đường dẫn của các task | nhánh tích hợp hỏng kiểm hoặc review; một lần, cộng một lần cho mỗi `grant-fix` |
 | `verify.run TARGET [--expect-red]` | không gì; mỗi lúc chỉ một lần kiểm trên mọi job | task đã build, hoặc nhánh tích hợp |
 | `review.run TARGET` | không gì | đích đã qua kiểm; reviewer khác họ mọi người làm mà nó kiểm |
 | `integrate.run` | nhánh local `qk/<slug>` | mọi task đã build, kiểm và review; không task nào đang chạy |
@@ -57,6 +57,8 @@ Các luật do code ép, không do prompt:
 - Hợp đồng phải đỏ trước mọi build (`--expect-red`); hợp đồng đã xanh sẵn thì job dừng.
 - Tích hợp gộp đúng các commit đã kiểm và review; nhánh bị đổi sau đó thì job dừng.
 - Vòng sửa chỉ nhận lần kiểm hỏng và finding có file và dòng. Còn lại chờ người.
+- Worker của một task chỉ bị chấm bằng các lệnh kiểm của chính task đó. Test của các task khác trong plan có thể fail trong worktree của nó cho tới khi tích hợp; test nó muốn thêm ngoài đường dẫn của mình thì ghi vào phần tóm tắt, không làm task dừng.
+- Khi các task đã tích hợp, chỉ nhánh tích hợp đi tiếp; không build, kiểm hay review riêng một task được nữa.
 - Test đòi hỏi hành vi plan không nêu là finding important.
 
 ## Chạy và chạy tiếp
@@ -77,11 +79,25 @@ harness aaea46 · task api stopped mid-step · qk-harness run
 harness 7 jobs not running (qk-harness status)
 ```
 
+Các lệnh hằng ngày:
+
+```bash
+qk-harness status --line                     # mọi job chưa xong, mỗi job một dòng
+qk-harness run JOB --until 07:00             # qua đêm: chờ hạn mức mở lại, nhưng không chờ quá 07:00
+qk-harness grant-fix JOB api --reason "các finding đáng cho thêm một lượt"
+qk-harness run JOB                           # vòng được cấp sẽ chạy: build.run JOB api --fix
+qk-harness abort JOB --reason "thay bằng một plan nhỏ hơn"
+```
+
+Job đang chờ người thì `next` nói rõ, ví dụ `a person decides: task api has serious review findings that a fix round cannot take`. Các finding nằm trong `state.json` của job (`tasks.<tên>.review.findings`, hoặc `integration.review.findings`). Sau đó chọn: cấp thêm một vòng, hoặc huỷ job.
+
 Khi job dừng (xong, bị chặn, bị huỷ, hoặc chờ người quyết; không tính chờ ở cổng duyệt), nó được ghi vào sổ bằng chứng của qk bằng `qk log run --producer "qk-harness <phiên bản>"`, nên hiện trong `qk show`, `qk stats` và `qk brief`. Card bị chặn ghi qk-harness là công cụ chạy tiếp nó.
 
 ## Đo
 
 `qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract] [--repeat N]` chạy một bài eval xây dựng của qk: `qk eval prepare`, một job medium mà cổng plan do eval duyệt (ghi rõ như vậy), không mở pull request, rồi `qk eval grade` trên nhánh tích hợp. Bộ chấm đọc báo cáo bốn dòng của chính harness. `result.json` giữ các tiêu chí, token và thời gian của từng lượt, và baseline của bài. Lệnh này chạy agent thật và tốn tiền. Kết quả tới nay: [số đo](measurements.md).
+
+Ví dụ, `qk-harness eval csv-export --repeat 3` chạy bài ba lần và báo `pass_share`, tỷ lệ lượt đạt mọi tiêu chí (`0.666…` khi hai trong ba lượt đạt).
 
 Dùng `--repeat N` (số nguyên dương, mặc định 1) để chạy bài N lần liên tiếp. Mỗi lần gọi có thư mục riêng trong `evals/` của thư mục trạng thái, gồm các thư mục lượt chạy được đánh số chứa `result.json` và một `summary.json` bên cạnh. Bản tổng hợp ghi thư mục, tiêu chí, tổng token và thời gian của từng lượt; `pass_share` là tỷ lệ lượt đạt tất cả tiêu chí. Mỗi lần lặp lại chạy agent thật và làm tăng chi phí.
 
@@ -89,7 +105,7 @@ Bản tổng hợp cũng ghi trạng thái dừng, lý do, bước tiếp theo, 
 
 ## Giới hạn
 
-- Agent thật mới được đo trên bài một task; việc nhiều task mới chạy với qk giả.
+- Agent thật đã được đo trên hai bài eval một task. Một job thật có hai task (Codex build, Claude review) đã đi tới pull request; job đó cần sửa prompt build và một vòng sửa do người cấp thêm.
 - Mỗi coordinator chạy một job; không có daemon hay hàng đợi.
 - Harness không merge, phát hành, gắn tag, xoá nhánh hay force-push, và không có capability nào làm được những việc đó.
 - Runtime: `codex`, `claude` và `omp`, theo mức qk hỗ trợ.

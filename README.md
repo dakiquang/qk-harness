@@ -29,13 +29,16 @@ qk-harness run JOB          # writes the plan, then stops for you
 qk-harness approve JOB plan
 qk-harness run JOB          # contract, tasks, integration, review, pull request
 qk-harness status JOB
+qk-harness status --line    # all unfinished jobs, one line each
 ```
+
+Overnight, `qk-harness run JOB --until 07:00` waits out a usage limit instead of stopping. When a task has used its one fix round, `qk-harness grant-fix JOB TASK` gives it one more; see [everyday commands](docs/en/guide.md#running-and-resuming).
 
 `run` stops at every gate, at any step that is blocked, and when a person must decide; `status` and every reply name the next step. The [guide](docs/en/guide.md) explains each capability, the gates, the options and the limits.
 
 ## Status
 
-Version 0.1.0. Built and tested against a stand-in qk; measured with real agents on two of qk's single-task eval cases ([measurements](docs/en/measurements.md)). Not yet run with real agents on work that has several tasks.
+Version 0.1.0. Built and tested against a stand-in qk; measured with real agents on two of qk's single-task eval cases ([measurements](docs/en/measurements.md)). One real job with two tasks has reached its pull request, with a person granting one extra fix round.
 
 ## Test
 

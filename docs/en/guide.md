@@ -43,8 +43,8 @@ Ownership overlaps and role families are checked when the plan is written, befor
 | `plan.write` | nothing | clean checkout; plan not approved |
 | `contract.write [--fix]` | the integration worktree, only under the contract paths | plan approved; `--fix` once after a failed contract review |
 | `contract.review` | nothing | a contract; reviewer from another family |
-| `build.run TASK [--fix]` | the task's own worktree, only its paths | contract reviewed and shown red (and approved for large jobs); `--fix` once |
-| `build.run integration --fix` | the integration worktree, only the tasks' paths | integrated branch failed its checks or review; once |
+| `build.run TASK [--fix]` | the task's own worktree, only its paths | contract reviewed and shown red (and approved for large jobs); `--fix` once, and once more per `grant-fix` |
+| `build.run integration --fix` | the integration worktree, only the tasks' paths | integrated branch failed its checks or review; once, and once more per `grant-fix` |
 | `verify.run TARGET [--expect-red]` | nothing; runs one verification at a time across jobs | a built task, or the integrated branch |
 | `review.run TARGET` | nothing | target passed its checks; reviewer from another family than every implementer it checks |
 | `integrate.run` | the local branch `qk/<slug>` | every task built, checked and reviewed; nothing running |
@@ -57,6 +57,8 @@ Rules the code enforces, not the prompt:
 - The contract must fail before any build (`--expect-red`); a contract that already passes stops the job.
 - Integration merges exactly the commits that were checked and reviewed; a branch that moved since stops the job.
 - A fix round takes only failed checks and findings that name a file and a line. Anything else waits for a person.
+- A task worker is judged only by its own task's checks. Tests of the plan's other tasks may fail in its worktree until integration; a test it would add outside its paths goes into its summary instead of stopping the task.
+- Once the tasks are integrated, only the integrated branch moves on; a task can no longer be built, checked or reviewed on its own.
 - A test that asks for behaviour the plan does not state is an important finding.
 
 ## Running and resuming
@@ -77,11 +79,25 @@ harness aaea46 · task api stopped mid-step · qk-harness run
 harness 7 jobs not running (qk-harness status)
 ```
 
+Everyday commands:
+
+```bash
+qk-harness status --line                     # every unfinished job, one line each
+qk-harness run JOB --until 07:00             # overnight: wait out usage limits, but never past 07:00
+qk-harness grant-fix JOB api --reason "the review findings are worth one more try"
+qk-harness run JOB                           # the granted round runs: build.run JOB api --fix
+qk-harness abort JOB --reason "replaced by a smaller plan"
+```
+
+A job waiting for a person says so in `next`, for example `a person decides: task api has serious review findings that a fix round cannot take`. The findings are in the job's `state.json` (`tasks.<name>.review.findings`, or `integration.review.findings`). Then either grant one more round or abort the job.
+
 When a job stops (done, blocked, aborted, or waiting for a decision; not at an approval gate) it is recorded in qk's evidence ledger with `qk log run --producer "qk-harness <version>"`, so it shows in `qk show`, `qk stats` and `qk brief`. A blocked card names qk-harness as the tool that resumes it.
 
 ## Measuring
 
 `qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract] [--repeat N]` runs one of qk's eval cases that builds something: `qk eval prepare`, a medium job whose plan gate the eval approves (recorded as such), no pull request, then `qk eval grade` on the integrated branch. The grader reads the harness's own four-line report. `result.json` keeps the criteria, every turn's tokens and time, and the case's baseline. It runs real agents and costs money. Results so far: [measurements](measurements.md).
+
+For example, `qk-harness eval csv-export --repeat 3` runs the case three times and reports `pass_share`, the share of runs that passed every criterion (`0.666…` when two of three did).
 
 Use `--repeat N` (a positive integer, default 1) to run the case sequentially N times. Each invocation has a unique directory under the state directory’s `evals/`, with numbered run directories containing `result.json` and a `summary.json` alongside them. The summary records each run’s directory, criteria, total tokens and elapsed seconds; `pass_share` is the fraction of runs where every criterion passed. Each repetition runs real agents again and adds to the cost.
 
@@ -89,7 +105,7 @@ The summary also includes each run's stop state, reason, next step, pass result 
 
 ## Limits
 
-- Real agents have been measured only on single-task cases; multi-task work has run only against the stand-in qk.
+- Real agents have been measured on two single-task eval cases. One real two-task job (Codex building, Claude reviewing) reached its pull request; it needed a fix to the build prompt and one fix round granted by a person.
 - One job runs at a time per coordinator; there is no daemon or queue.
 - The harness does not merge, release, tag, delete branches or force-push, and has no capability that could.
 - Runtimes: `codex`, `claude` and `omp`, as qk supports them.
