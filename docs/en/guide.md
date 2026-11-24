@@ -69,7 +69,11 @@ When a job stops (done, blocked, aborted, or waiting for a decision; not at an a
 
 ## Measuring
 
-`qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract]` runs one of qk's eval cases that builds something: `qk eval prepare`, a medium job whose plan gate the eval approves (recorded as such), no pull request, then `qk eval grade` on the integrated branch. The grader reads the harness's own four-line report. `result.json` keeps the criteria, every turn's tokens and time, and the case's baseline. It runs real agents and costs money. Results so far: [measurements](measurements.md).
+`qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract] [--repeat N]` runs one of qk's eval cases that builds something: `qk eval prepare`, a medium job whose plan gate the eval approves (recorded as such), no pull request, then `qk eval grade` on the integrated branch. The grader reads the harness's own four-line report. `result.json` keeps the criteria, every turn's tokens and time, and the case's baseline. It runs real agents and costs money. Results so far: [measurements](measurements.md).
+
+Use `--repeat N` (a positive integer, default 1) to run the case sequentially N times. Each invocation has a unique directory under the state directory’s `evals/`, with numbered run directories containing `result.json` and a `summary.json` alongside them. The summary records each run’s directory, criteria, total tokens and elapsed seconds; `pass_share` is the fraction of runs where every criterion passed. Each repetition runs real agents again and adds to the cost.
+
+The summary also includes each run's stop state, reason, next step, pass result and baseline. With one run, stdout also includes the full run result, including failed criteria details and totals. The command exits with code 0 when every run stops at `waiting` or `done`, even if grading fails; other stop states or errors yield code 2.
 
 ## Limits
 

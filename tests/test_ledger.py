@@ -120,6 +120,19 @@ class LedgerTests(Sandbox):
         self.assertLessEqual(set(ledger.STAGES.values()), RUNNER_STAGES)
         self.assertEqual(set(ledger.STAGES), set(policy.CAPABILITIES))
 
+    def test_legacy_roles_use_write_access_and_capabilities_keep_their_roles(self):
+        job = state.load(self.new())
+        job["usage"] = [
+            {"spec": "legacy-writer", "write": True},
+            {"spec": "legacy-reader", "write": False},
+            {"spec": "cap-writer", "capability": "build.run", "write": False},
+            {"spec": "cap-reviewer", "capability": "review.run", "write": True},
+            {"spec": "unknown-cap", "capability": "future.step", "write": False},
+        ]
+        data = ledger.run_state(job, "done")
+        self.assertEqual(set(data["impl"].split(", ")), {"legacy-writer", "cap-writer", "unknown-cap"})
+        self.assertEqual(set(data["review"].split(", ")), {"legacy-reader", "cap-reviewer"})
+
 
 class ReviewFollowUpTests(Sandbox):
     """Problems found when reviewing the integration fix round, the ledger and abort."""

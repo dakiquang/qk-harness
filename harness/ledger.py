@@ -36,8 +36,12 @@ def run_state(job, stage):
     tasks = job["tasks"].values()
     turns = job.get("usage", [])
     # The models that actually ran, not the defaults: a job stopped early names only what did the work.
-    impl = sorted({entry["spec"] for entry in turns if entry.get("capability") not in REVIEW_CAPABILITIES})
-    review = sorted({entry["spec"] for entry in turns if entry.get("capability") in REVIEW_CAPABILITIES})
+    def is_review(entry):
+        capability = entry.get("capability")
+        return capability in REVIEW_CAPABILITIES if capability is not None else not entry.get("write")
+
+    impl = sorted({entry["spec"] for entry in turns if not is_review(entry)})
+    review = sorted({entry["spec"] for entry in turns if is_review(entry)})
     usage = {}
     for entry in job.get("usage", []):
         name = STAGES.get(entry.get("capability"), "implementing" if entry.get("write") else "reviewing")

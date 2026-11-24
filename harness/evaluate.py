@@ -7,8 +7,12 @@ written from the job state; the harness has no other final message.
 """
 
 import json
+import tempfile
 from pathlib import Path
-import time
+from time import monotonic, strftime
+from types import SimpleNamespace
+
+time = SimpleNamespace(monotonic=monotonic, strftime=strftime)
 
 from harness import capabilities, coordinator, policy, state
 from harness.qk_cli import state_root
@@ -66,9 +70,9 @@ def baseline(qk, case):
     return {spec: cases[case] for spec, cases in data.items() if isinstance(cases, dict) and case in cases}
 
 
-def run_eval(case, qk, impl, review, contract=True):
+def run_eval(case, qk, impl, review, contract=True, *, directory=None):
     """Measure one case; the result is also written next to the run as result.json."""
-    root = state_root() / "evals" / f"{case}-{time.strftime('%Y%m%d-%H%M%S')}"
+    root = Path(directory) if directory is not None else state_root() / "evals" / f"{case}-{time.strftime('%Y%m%d-%H%M%S')}"
     prepared = qk.eval_prepare(case, root)
     data = prepared.data if isinstance(prepared.data, dict) else {}
     if prepared.code != 0 or "workdir" not in data:
@@ -113,3 +117,27 @@ def run_eval(case, qk, impl, review, contract=True):
     (root / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     result["dir"] = str(root)
     return result
+
+
+def run_evals(case, qk, impl, review, repeat=1, contract=True):
+    """Run a case sequentially and save a summary once all runs are graded."""
+    if not isinstance(repeat, int) or isinstance(repeat, bool) or repeat < 1:
+        raise ValueError("repeat must be a positive integer")
+    parent = state_root() / "evals"
+    parent.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix=f"{case}-{time.strftime('%Y%m%d-%H%M%S')}-", dir=parent))
+    runs = []
+    for index in range(1, repeat + 1):
+        result = run_eval(case, qk, impl, review, contract=contract, directory=root / f"run-{index}")
+        runs.append({"dir": result["dir"], "criteria": result["criteria"],
+                     "tokens": result["totals"]["tokens"], "seconds": result["seconds"],
+                     **{key: result[key] for key in ("stopped", "reason", "next", "passed", "baseline")}})
+    summary = {"case": case, "runs": runs,
+               "pass_share": sum(all(run["criteria"].values()) for run in runs) / repeat}
+    if repeat == 1:
+        summary.update({key: runs[0][key] for key in ("stopped", "reason", "next", "passed", "baseline")})
+    (root / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    summary["dir"] = str(root)
+    if repeat == 1:
+        summary.update(result)
+    return summary

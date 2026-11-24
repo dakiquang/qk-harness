@@ -13,6 +13,16 @@ DEFAULT_IMPL = "codex:gpt-6.1-terra"
 DEFAULT_REVIEW = "claude:"
 
 
+def positive_int(value):
+    try:
+        number = int(value)
+        if number > 0:
+            return number
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("must be a positive integer")
+
+
 def parser():
     # --lock works before or after the command name; after it wins.
     common = argparse.ArgumentParser(add_help=False)
@@ -47,6 +57,7 @@ def parser():
     measure.add_argument("case")
     measure.add_argument("--impl", default=DEFAULT_IMPL)
     measure.add_argument("--review", default=DEFAULT_REVIEW)
+    measure.add_argument("--repeat", type=positive_int, default=1, help="number of sequential runs (default: 1)")
     measure.add_argument("--no-contract", action="store_true", help="measure without the contract stage")
     status = commands.add_parser("status", help="print a job and its next step")
     status.add_argument("job")
@@ -107,7 +118,8 @@ def main(argv=None):
             elif args.command == "eval":
                 if capabilities.family(qk, args.impl) == capabilities.family(qk, args.review):
                     raise capabilities.Blocked(f"{args.impl} and {args.review} are the same model family")
-                reply = evaluate.run_eval(args.case, qk, args.impl, args.review, contract=not args.no_contract)
+                reply = evaluate.run_evals(args.case, qk, args.impl, args.review, repeat=args.repeat,
+                                           contract=not args.no_contract)
             elif args.command in ("run", "resume"):
                 reply = coordinator.run(args.job, qk)
             else:
@@ -118,6 +130,8 @@ def main(argv=None):
         print(f"qk-harness: {error}", file=sys.stderr)
         return 2
     print(json.dumps(reply, ensure_ascii=False))
+    if args.command == "eval":
+        return 0 if all(run["stopped"] in ("waiting", "done") for run in reply["runs"]) else 2
     if "stopped" in reply:  # the loop: waiting at a gate and done are normal ends
         return 0 if reply["stopped"] in ("waiting", "done") else 2
     return 0 if reply.get("status", "done") == "done" else 2

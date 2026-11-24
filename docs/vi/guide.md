@@ -69,7 +69,11 @@ Khi job dừng (xong, bị chặn, bị huỷ, hoặc chờ người quyết; kh
 
 ## Đo
 
-`qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract]` chạy một bài eval xây dựng của qk: `qk eval prepare`, một job medium mà cổng plan do eval duyệt (ghi rõ như vậy), không mở pull request, rồi `qk eval grade` trên nhánh tích hợp. Bộ chấm đọc báo cáo bốn dòng của chính harness. `result.json` giữ các tiêu chí, token và thời gian của từng lượt, và baseline của bài. Lệnh này chạy agent thật và tốn tiền. Kết quả tới nay: [số đo](measurements.md).
+`qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract] [--repeat N]` chạy một bài eval xây dựng của qk: `qk eval prepare`, một job medium mà cổng plan do eval duyệt (ghi rõ như vậy), không mở pull request, rồi `qk eval grade` trên nhánh tích hợp. Bộ chấm đọc báo cáo bốn dòng của chính harness. `result.json` giữ các tiêu chí, token và thời gian của từng lượt, và baseline của bài. Lệnh này chạy agent thật và tốn tiền. Kết quả tới nay: [số đo](measurements.md).
+
+Dùng `--repeat N` (số nguyên dương, mặc định 1) để chạy bài N lần liên tiếp. Mỗi lần gọi có thư mục riêng trong `evals/` của thư mục trạng thái, gồm các thư mục lượt chạy được đánh số chứa `result.json` và một `summary.json` bên cạnh. Bản tổng hợp ghi thư mục, tiêu chí, tổng token và thời gian của từng lượt; `pass_share` là tỷ lệ lượt đạt tất cả tiêu chí. Mỗi lần lặp lại chạy agent thật và làm tăng chi phí.
+
+Bản tổng hợp cũng ghi trạng thái dừng, lý do, bước tiếp theo, kết quả đạt và baseline của từng lượt. Khi chỉ chạy một lượt, stdout còn chứa đầy đủ kết quả lượt chạy, gồm chi tiết tiêu chí trượt và tổng số liệu. Lệnh thoát với mã 0 khi mọi lượt dừng ở `waiting` hoặc `done`, kể cả khi chấm trượt; các trạng thái dừng khác hoặc lỗi cho mã 2.
 
 ## Giới hạn
 
