@@ -70,7 +70,7 @@ def baseline(qk, case):
     return {spec: cases[case] for spec, cases in data.items() if isinstance(cases, dict) and case in cases}
 
 
-def run_eval(case, qk, impl, review, contract=True, *, directory=None):
+def run_eval(case, qk, impl, review, contract=True, *, directory=None, task_review=True):
     """Measure one case; the result is also written next to the run as result.json."""
     root = Path(directory) if directory is not None else state_root() / "evals" / f"{case}-{time.strftime('%Y%m%d-%H%M%S')}"
     prepared = qk.eval_prepare(case, root)
@@ -80,7 +80,8 @@ def run_eval(case, qk, impl, review, contract=True, *, directory=None):
     if not data.get("task"):
         raise EvalError(f"{case} is a review case; the harness measures cases that build something")
     task = Path(data["task"]).read_text(encoding="utf-8").strip()
-    job = state.new_job(data["workdir"], task, "medium", "main", impl, review, contract=contract)
+    job = state.new_job(data["workdir"], task, "medium", "main", impl, review, contract=contract,
+                        task_review=task_review)
     with state.locked(job["id"]) as locked:
         locked["eval"] = {"case": case, "dir": str(root)}
     started = time.monotonic()
@@ -107,7 +108,7 @@ def run_eval(case, qk, impl, review, contract=True, *, directory=None):
     grade = graded.data if isinstance(graded.data, dict) else {}
     if graded.code != 0 or "criteria" not in grade:
         raise EvalError(f"qk eval grade {case} failed: {graded.stderr.strip()[-300:]}")
-    result = {"case": case, "job": job["id"], "impl": impl, "review": review, "contract": contract,
+    result = {"case": case, "job": job["id"], "impl": impl, "review": review, "contract": contract, "task_review": task_review,
               "stopped": reply.get("stopped"),
               "reason": reply.get("reason", ""), "next": reply.get("next"), "graded": graded_tree,
               "criteria": {item["name"]: item["passed"] for item in grade["criteria"]},
@@ -119,7 +120,7 @@ def run_eval(case, qk, impl, review, contract=True, *, directory=None):
     return result
 
 
-def run_evals(case, qk, impl, review, repeat=1, contract=True):
+def run_evals(case, qk, impl, review, repeat=1, contract=True, task_review=True):
     """Run a case sequentially and save a summary once all runs are graded."""
     if not isinstance(repeat, int) or isinstance(repeat, bool) or repeat < 1:
         raise ValueError("repeat must be a positive integer")
@@ -128,7 +129,8 @@ def run_evals(case, qk, impl, review, repeat=1, contract=True):
     root = Path(tempfile.mkdtemp(prefix=f"{case}-{time.strftime('%Y%m%d-%H%M%S')}-", dir=parent))
     runs = []
     for index in range(1, repeat + 1):
-        result = run_eval(case, qk, impl, review, contract=contract, directory=root / f"run-{index}")
+        result = run_eval(case, qk, impl, review, contract=contract, directory=root / f"run-{index}",
+                          task_review=task_review)
         runs.append({"dir": result["dir"], "criteria": result["criteria"],
                      "tokens": result["totals"]["tokens"], "seconds": result["seconds"],
                      **{key: result[key] for key in ("stopped", "reason", "next", "passed", "baseline")}})

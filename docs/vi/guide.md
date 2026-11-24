@@ -95,7 +95,7 @@ Khi job dừng (xong, bị chặn, bị huỷ, hoặc chờ người quyết; kh
 
 ## Đo
 
-`qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract] [--repeat N]` chạy một bài eval xây dựng của qk: `qk eval prepare`, một job medium mà cổng plan do eval duyệt (ghi rõ như vậy), không mở pull request, rồi `qk eval grade` trên nhánh tích hợp. Bộ chấm đọc báo cáo bốn dòng của chính harness. `result.json` giữ các tiêu chí, token và thời gian của từng lượt, và baseline của bài. Lệnh này chạy agent thật và tốn tiền. Kết quả tới nay: [số đo](measurements.md).
+`qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract] [--no-task-review] [--repeat N]` chạy một bài eval xây dựng của qk: `qk eval prepare`, một job medium mà cổng plan do eval duyệt (ghi rõ như vậy), không mở pull request, rồi `qk eval grade` trên nhánh tích hợp. Bộ chấm đọc báo cáo bốn dòng của chính harness. `result.json` giữ các tiêu chí, token và thời gian của từng lượt, và baseline của bài. Lệnh này chạy agent thật và tốn tiền. Kết quả tới nay: [số đo](measurements.md).
 
 Ví dụ, `qk-harness eval csv-export --repeat 3` chạy bài ba lần và báo `pass_share`, tỷ lệ lượt đạt mọi tiêu chí (`0.666…` khi hai trong ba lượt đạt).
 

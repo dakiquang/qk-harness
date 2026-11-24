@@ -183,6 +183,22 @@ class EvaluateTests(Sandbox):
             result = evaluate.run_eval(case, self.qk, "codex:", "claude:")
         return result, [json.loads(line)["argv"] for line in log.read_text().splitlines()]
 
+    def test_a_case_can_run_without_task_reviews(self):
+        log = self.tmp / "qk-calls.jsonl"
+        with mock.patch.dict(os.environ, {"FAKE_QK_LOG": str(log)}):
+            result = evaluate.run_eval("csv-export", self.qk, "codex:", "claude:", task_review=False)
+        job = state.load(result["job"])
+        self.assertEqual((result["stopped"], result["task_review"], job["options"]["task_review"]), ("done", False, False))
+        reviews = [json.loads(line)["stdin"] for line in log.read_text().splitlines()
+                   if json.loads(line)["argv"][:2] == ["agent", "run"] and "Independent read-only review." in
+                   json.loads(line)["stdin"]]  # code reviews, not the contract review
+        self.assertTrue(reviews)
+        self.assertTrue(all("review-integration.diff" in prompt for prompt in reviews), "only the integrated review")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), \
+                mock.patch.object(evaluate, "run_evals", return_value={"runs": [{"stopped": "done"}]}) as runs:
+            cli.main(["--lock", str(self.lock), "eval", "csv-export", "--no-task-review"])
+        self.assertIs(runs.call_args.kwargs["task_review"], False)
+
     def test_a_case_runs_to_the_integrated_branch_and_is_graded_there(self):
         result, calls = self.measure()
         job = state.load(result["job"])

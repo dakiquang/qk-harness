@@ -30,3 +30,4 @@ All notable changes to this project are documented here. The format follows
   its own is used; refused unless a fix round could take what is still wrong. The job's log keeps the decision.
 - `status` without a job lists unfinished jobs as JSON, or with `--line` as one status line each, for runtime
   adapters.
+- `eval --no-task-review` measures a case with only the integrated review.

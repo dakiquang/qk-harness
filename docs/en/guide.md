@@ -95,7 +95,7 @@ When a job stops (done, blocked, aborted, or waiting for a decision; not at an a
 
 ## Measuring
 
-`qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract] [--repeat N]` runs one of qk's eval cases that builds something: `qk eval prepare`, a medium job whose plan gate the eval approves (recorded as such), no pull request, then `qk eval grade` on the integrated branch. The grader reads the harness's own four-line report. `result.json` keeps the criteria, every turn's tokens and time, and the case's baseline. It runs real agents and costs money. Results so far: [measurements](measurements.md).
+`qk-harness eval CASE [--impl SPEC] [--review SPEC] [--no-contract] [--no-task-review] [--repeat N]` runs one of qk's eval cases that builds something: `qk eval prepare`, a medium job whose plan gate the eval approves (recorded as such), no pull request, then `qk eval grade` on the integrated branch. The grader reads the harness's own four-line report. `result.json` keeps the criteria, every turn's tokens and time, and the case's baseline. It runs real agents and costs money. Results so far: [measurements](measurements.md).
 
 For example, `qk-harness eval csv-export --repeat 3` runs the case three times and reports `pass_share`, the share of runs that passed every criterion (`0.666…` when two of three did).
 

@@ -66,6 +66,7 @@ def parser():
     measure.add_argument("--review", default=DEFAULT_REVIEW)
     measure.add_argument("--repeat", type=positive_int, default=1, help="number of sequential runs (default: 1)")
     measure.add_argument("--no-contract", action="store_true", help="measure without the contract stage")
+    measure.add_argument("--no-task-review", action="store_true", help="measure with only the integrated review")
     status = commands.add_parser("status", help="print a job and its next step")
     status.add_argument("job", nargs="?")
     formats = status.add_mutually_exclusive_group()
@@ -275,7 +276,7 @@ def main(argv=None):
                 if capabilities.family(qk, args.impl) == capabilities.family(qk, args.review):
                     raise capabilities.Blocked(f"{args.impl} and {args.review} are the same model family")
                 reply = evaluate.run_evals(args.case, qk, args.impl, args.review, repeat=args.repeat,
-                                           contract=not args.no_contract)
+                                           contract=not args.no_contract, task_review=not args.no_task_review)
             elif args.command in ("run", "resume"):
                 deadline = coordinator.deadline_at(args.until) if args.until else None
                 wait = args.wait_limits if args.wait_limits is not None else deadline is not None
