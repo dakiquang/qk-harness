@@ -4,6 +4,7 @@ Every capability checks its own preconditions here before it does anything, whet
 calls it. A refusal carries the reason and the next command that would move the job forward.
 """
 
+from datetime import datetime
 import hashlib
 from pathlib import Path
 
@@ -96,8 +97,71 @@ def fixable(task):
     return bool(findings) and located(findings)
 
 
+# --------------------------------------------------------------- usage limits
+
+
+def runtime(spec):
+    return str(spec or "").split(":", 1)[0]
+
+
+def step_spec(job, capability, target=None):
+    """The runtime:model an agent turn of this step uses, or None for a step without one."""
+    task = job["tasks"].get(target) if target not in (None, "integration") else None
+    if capability in ("plan.write", "contract.write") or (capability == "build.run" and task is None):
+        return job["impl"]
+    if capability == "contract.review" or (capability == "review.run" and task is None):
+        return job["review"]
+    if capability == "build.run":
+        return task.get("impl_spec", job["impl"])
+    if capability == "review.run":
+        return task.get("review_spec", job["review"])
+    return None
+
+
+def held(job, step):
+    """(runtime, limit) when the capability step `step` needs a runtime stopped at its usage limit, else None."""
+    words = step.split()
+    if not words or words[0] not in CAPABILITIES:
+        return None
+    target = next((word for word in words[2:] if not word.startswith("--")), None)
+    name = runtime(step_spec(job, words[0], target))
+    limit = (job.get("limits") or {}).get(name)
+    return (name, limit) if name and limit else None
+
+
+def reset_time(limit):
+    """The local time the limit resets, or None when the runtime named none."""
+    try:
+        moment = datetime.fromisoformat(str(limit.get("reset_at")))
+    except ValueError:
+        return None
+    return moment.astimezone()  # a time without an offset is read as local time
+
+
+def until(limit):
+    moment = reset_time(limit)
+    if moment is None:
+        return "(reset time unknown)"
+    today = datetime.now().astimezone().date()
+    return f"until {moment:%H:%M}" if moment.date() == today else f"until {moment:%Y-%m-%d %H:%M}"
+
+
+def limit_wait(step):
+    """Whether `step` is a wait for a usage limit rather than for a person or a running task."""
+    return step.startswith("wait: ") and " usage limit " in step
+
+
 def next_step(job):
-    """The command that moves the job forward, or why a person has to act."""
+    """The command that moves the job forward, or why a person has to act. A step whose runtime is stopped at its
+    usage limit becomes a wait for the reset."""
+    step = _next_step(job)
+    hold = held(job, step)
+    if hold:
+        return f"wait: the {hold[0]} usage limit {until(hold[1])}, then {step}"
+    return step
+
+
+def _next_step(job):
     job_id = job["id"]
     if job.get("aborted"):
         return f"aborted: {job['aborted']['reason'] or 'no reason given'}"
@@ -125,10 +189,11 @@ def next_step(job):
         return "a person decides: the contract tests already pass before any build, so they prove nothing"
     elif not gate_open(job, "contract"):
         return f"approve {job_id} contract"
-    for name, task in job["tasks"].items():
-        step = task_step(job, name, task)
-        if step:
-            return step
+    steps = [step for step in (task_step(job, name, task) for name, task in job["tasks"].items()) if step]
+    if steps:
+        # A usage-limit wait never hides a decision another task needs from a person.
+        return next((step for step in steps if step.startswith("a person decides")), steps[0]) \
+            if limit_wait(steps[0]) else steps[0]
     if not gate_open(job, "build"):
         return f"approve {job_id} build"
     integration = job["integration"]
@@ -155,7 +220,16 @@ def next_step(job):
 
 
 def task_step(job, name, task):
-    """What one task needs next, or None when it is built, checked and (unless switched off) reviewed."""
+    """What one task needs next, or None when it is built, checked and (unless switched off) reviewed. A task
+    whose next turn needs a runtime stopped at its usage limit waits; the other tasks go on."""
+    step = _task_step(job, name, task)
+    hold = held(job, step) if step else None
+    if hold:
+        return f"wait: task {name} needs the {hold[0]} usage limit to reset {until(hold[1])}, then {step}"
+    return step
+
+
+def _task_step(job, name, task):
     job_id = job["id"]
     if task.get("running"):
         return f"wait: task {name} is running {task['running']['capability']}"

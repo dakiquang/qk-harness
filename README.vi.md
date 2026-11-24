@@ -4,7 +4,7 @@
 
 Một agent harness cá nhân. Nó chạy một việc có nhiều task trên nền [qk](https://github.com/dakiquang/qk): hợp đồng được viết và review trước khi build, mỗi task một worktree (chạy hai task cùng lúc), gộp vào một nhánh, review bởi một họ model khác, mỗi task và phần tích hợp tối đa một vòng sửa, và một pull request. Harness không bao giờ merge; người merge.
 
-qk-harness phụ thuộc qk một chiều. Nó chỉ dùng [hợp đồng CLI](https://github.com/dakiquang/qk/blob/v0.9.0/docs/vi/cli-contract.md) có phiên bản của qk, không import module Python của qk, và chạy bản qk khoá trong [`qk.lock`](qk.lock), không phải bản cài trên máy.
+qk-harness phụ thuộc qk một chiều. Nó chỉ dùng [hợp đồng CLI](https://github.com/dakiquang/qk/blob/v0.10.0/docs/vi/cli-contract.md) có phiên bản của qk, không import module Python của qk, và chạy bản qk khoá trong [`qk.lock`](qk.lock), không phải bản cài trên máy.
 
 Việc chỉ có một task thì dùng `qk-run` của qk: rẻ và nhanh hơn. Harness dành cho việc tách được thành nhiều task build song song.
 

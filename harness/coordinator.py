@@ -5,13 +5,19 @@ checks its own preconditions; the loop only reads `policy.next_step` and stops w
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
+import sys
+import time
 
 from harness import capabilities, gitops, ledger, policy, state
 
 
 MAX_STEPS = 60  # a job with many tasks and one fix round each stays far below this
 DEFAULT_PARALLEL = 2  # task turns at once; verification still runs one at a time
+LIMIT_GRACE = timedelta(minutes=2)  # wait a little past the reset the runtime named
+LIMIT_RETRY_GAP = timedelta(minutes=30)  # when it named no reset time
+LIMIT_WAITS = 3  # waits for usage limits in one run, so a limit that never lifts cannot keep the loop alive
 
 
 def parse_step(step):
@@ -28,12 +34,77 @@ def run_step(job_id, qk, step):
     return capabilities.run(job_id, capability, qk, target, expect_red=expect_red, fix=fix)
 
 
-def run(job_id, qk, max_steps=MAX_STEPS):
+def run(job_id, qk, max_steps=MAX_STEPS, *, wait_limits=False, deadline=None):
     """Advance the job; the last capability reply, with `stopped` saying why the loop ended. A job that has
-    stopped (done, blocked, aborted, or waiting for a person's decision) is recorded in qk's ledger."""
+    stopped (done, blocked, aborted, limited, or waiting for a person's decision) is recorded in qk's ledger.
+
+    Running a job retries the runtimes a usage limit stopped. With `wait_limits`, a job stopped by a usage limit
+    sleeps until the reset (plus a grace period) and carries on, at most LIMIT_WAITS times and never past
+    `deadline` (a local datetime)."""
     cleared = ledger.recover(job_id)
-    reply = finish(job_id, qk, loop(job_id, qk, max_steps))
+    release(job_id)
+    reply = loop(job_id, qk, max_steps)
+    for _ in range(LIMIT_WAITS if wait_limits else 0):
+        if reply.get("stopped") != "limited":
+            break
+        limits = state.load(job_id).get("limits") or {}
+        wake = wake_time(limits)
+        names = ", ".join(sorted(limits))
+        if deadline is not None and wake >= deadline:
+            notify(f"Gave up: the {names} usage limit resets after the {deadline:%H:%M} deadline; "
+                   f"run qk-harness run {job_id} after the reset.")
+            break
+        notify(f"{names} usage limit; job {job_id} waits until {wake:%H:%M}.")
+        sleep_until(wake)
+        notify(f"Retrying job {job_id} after the {names} usage limit.")
+        release(job_id)
+        reply = loop(job_id, qk, max_steps)
+    else:
+        if wait_limits and reply.get("stopped") == "limited":
+            notify(f"Gave up on job {job_id}: still stopped by a usage limit after {LIMIT_WAITS} waits.")
+    reply = finish(job_id, qk, reply)
     return dict(reply, recovered=cleared) if cleared else reply
+
+
+def release(job_id):
+    """Forget the usage limits a job recorded, so its next steps try those runtimes again."""
+    with state.locked(job_id) as job:
+        if job.pop("limits", None):
+            capabilities.record(job, "resume", "done", "retrying runtimes stopped by a usage limit")
+
+
+def wake_time(limits):
+    """When to retry: the earliest reset plus a grace period; LIMIT_RETRY_GAP from now for a limit with none."""
+    now = datetime.now().astimezone()
+    times = [policy.reset_time(limit) for limit in limits.values()]
+    return min((moment + LIMIT_GRACE if moment else now + LIMIT_RETRY_GAP) for moment in times) if times \
+        else now + LIMIT_RETRY_GAP
+
+
+def sleep_until(moment):
+    while True:
+        left = (moment - datetime.now().astimezone()).total_seconds()
+        if left <= 0:
+            return
+        time.sleep(min(left, 60))
+
+
+def notify(text):
+    """Say it on stderr and, on macOS, as a notification, so a person away from the terminal sees it."""
+    print(f"qk-harness: {text}", file=sys.stderr)
+    gitops.notify("qk-harness", text)
+
+
+def deadline_at(clock, now=None):
+    """The next local time HH:MM, today or tomorrow, with the UTC offset in force on that day."""
+    now = now or datetime.now().astimezone()
+    hour, minute = (int(part) for part in clock.split(":"))
+    for day in (now.date(), now.date() + timedelta(days=1)):
+        for fold in (0, 1):  # a clock time that occurs twice when clocks go back: the first one still ahead
+            moment = datetime(day.year, day.month, day.day, hour, minute, fold=fold).astimezone()
+            if moment > now:
+                return moment
+    return moment
 
 
 def finish(job_id, qk, reply):
@@ -51,15 +122,16 @@ def loop(job_id, qk, max_steps):
         if len(batch) > 1:  # several tasks can move: their turns run at once, each in its own qk process
             with ThreadPoolExecutor(max_workers=len(batch)) as pool:
                 replies = list(pool.map(lambda step: run_step(job_id, qk, step), batch))
-            failed = [item for item in replies if item["status"] != "done"]
+            failed = [item for item in replies if item["status"] not in ("done", "limited")]
             if failed:
                 return dict(failed[0], stopped=failed[0]["status"], parallel=replies)
-            reply = replies[-1]
+            reply = replies[-1]  # a task stopped by a usage limit waits while the others go on
             continue
-        step = policy.next_step(job)
+        step = batch[0] if batch else policy.next_step(job)  # one task can move while another waits
         parsed = parse_step(step)
         if parsed is None:
-            stopped = "done" if step.startswith("done") else "aborted" if step.startswith("aborted") else "waiting"
+            stopped = "done" if step.startswith("done") else "aborted" if step.startswith("aborted") else \
+                "limited" if policy.limit_wait(step) else "waiting"
             return dict(reply, stopped=stopped, next=step)
         capability, target, expect_red, fix = parsed
         reply = capabilities.run(job_id, capability, qk, target, expect_red=expect_red, fix=fix)

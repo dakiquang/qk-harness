@@ -2,11 +2,12 @@
 `qk brief` like a qk-run run. The ledger is qk's; the harness only hands it a stopped run in qk's documented shape.
 """
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
 
-from harness import __version__, capabilities, gitops, state
+from harness import __version__, capabilities, gitops, policy, state
 
 
 REVIEW_CAPABILITIES = ("contract.review", "review.run")
@@ -24,14 +25,15 @@ def outcome(job, step, stopped=None):
         return "aborted"
     if step.startswith("done:"):
         return "done"
-    if stopped == "blocked" or step.startswith("a person decides") or \
-            job["log"] and job["log"][-1]["status"] == "blocked":
+    if stopped in ("blocked", "limited") or step.startswith("a person decides") or \
+            job["log"] and job["log"][-1]["status"] in ("blocked", "limited"):
         return "blocked"
     return None
 
 
-def run_state(job, stage):
-    """The job in the shape `qk log run` reads (qk's CLI contract, version 1)."""
+def run_state(job, stage, limited=False):
+    """The job in the shape `qk log run` reads (qk's CLI contract, version 1). `limited`: the job stopped to
+    wait for a usage limit, not for a failure."""
     integration = job["integration"]
     tasks = job["tasks"].values()
     turns = job.get("usage", [])
@@ -69,8 +71,14 @@ def run_state(job, stage):
                 added, deleted = added + int(parts[0]), deleted + int(parts[1])
         data["diff_stat"] = {"files": files, "added": added, "deleted": deleted}
     if stage == "blocked":
-        last = next((entry for entry in reversed(job["log"]) if entry["status"] in ("blocked", "refused")), None)
+        last = next((entry for entry in reversed(job["log"]) if entry["status"] in ("blocked", "refused", "limited")),
+                    None)
         data["blocked_at"] = STAGES.get(last["capability"], "reviewing") if last else "reviewing"
+        limits = job.get("limits") or {}
+        if limited and limits:  # qk brief then shows "waiting for <runtime> limit until HH:MM" instead of a failure
+            far = datetime.max.replace(tzinfo=timezone.utc)
+            name = min(limits, key=lambda item: policy.reset_time(limits[item]) or far)
+            data["limited"] = {"runtime": name, "reset_at": limits[name].get("reset_at")}
     return data
 
 
@@ -80,7 +88,7 @@ def record(job_id, qk, step, stopped=None):
         stage = None if job.get("eval") else outcome(job, step, stopped)
         if stage is None:
             return None
-        data = run_state(job, stage)
+        data = run_state(job, stage, limited=stopped == "limited")
         unchanged = dict(data, ledger_revision=None)
         digest = hashlib.sha256(json.dumps(unchanged, sort_keys=True).encode("utf-8")).hexdigest()
         if job.get("logged") == digest:

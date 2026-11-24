@@ -30,12 +30,28 @@ class Blocked(Exception):
     """The step ran but cannot be accepted; the job stays where it was and a person looks."""
 
 
+class Limited(Blocked):
+    """The runtime stopped at its usage limit: nothing is wrong with the step, which runs again after the reset.
+    `limit` is qk's `{"runtime", "reset_at"}` (reset_at is null when the runtime named no time)."""
+
+    def __init__(self, message, limit):
+        super().__init__(message)
+        self.limit = limit
+
+
 def now():
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 def record(job, capability, status, reason=""):
     job["log"].append({"at": now(), "capability": capability, "status": status, "reason": reason})
+
+
+def hold(job, capability, limit, reason):
+    """Record a step stopped by a usage limit: the job waits for that runtime instead of counting a failure."""
+    job.setdefault("limits", {})[limit["runtime"]] = {"reset_at": limit.get("reset_at"), "at": now(),
+                                                      "capability": capability}
+    record(job, capability, "limited", reason)
 
 
 # --------------------------------------------------------------- agent turns
@@ -56,6 +72,16 @@ def turn(qk, job, spec, cwd, prompt, *, write, add_dirs=()):
                                         "status": data.get("status") or "failed",
                                         "usage": data.get("usage"), "seconds": data.get("seconds"),
                                         "events": f"{stem}.events.jsonl"})
+    limit = data.get("limit")
+    if isinstance(limit, dict) and limit.get("runtime"):  # qk read the runtime's own usage-limit message
+        job["usage"][-1]["status"] = "limited"
+        # The step starts over after the reset, so edits made before the limit are dropped, but only in a
+        # worktree inside this job's own directory: never the person's checkout or a path that leads elsewhere.
+        if write and Path(cwd).resolve().is_relative_to(state.job_dir(job["id"]).resolve()):
+            gitops.discard(cwd)
+        raise Limited(f"{spec} turn stopped at the {limit['runtime']} usage limit: "
+                      f"{data.get('reason') or reply.stderr.strip()[-300:]}",
+                      {"runtime": str(limit["runtime"]), "reset_at": limit.get("reset_at") or None})
     if reply.code != 0 or data.get("status") != "done" or not isinstance(data.get("result"), dict):
         raise Blocked(f"{spec} turn {data.get('status') or 'failed'}: "
                       f"{data.get('reason') or reply.stderr.strip()[-300:] or 'no result'}")
@@ -515,9 +541,12 @@ def run_unlocked(job_id, capability, qk, target, fix):
         work = copy.deepcopy(job)
         work["current"] = capability
     seen = len(work.get("usage", []))
-    status, reason, details = "done", "", {}
+    status, reason, details, limit = "done", "", {}, None
     try:
         details = build_run(work, qk, target, fix=fix) if capability == "build.run" else review_run(work, qk, target)
+    except Limited as error:
+        status, reason, limit = "limited", str(error), error.limit
+        details = {"limit": limit}
     except (Blocked, gitops.GitError) as error:
         status, reason = "blocked", str(error)
     finally:
@@ -525,7 +554,10 @@ def run_unlocked(job_id, capability, qk, target, fix):
             work["tasks"][target].pop("running", None)
             job["tasks"][target] = work["tasks"][target]
             job.setdefault("usage", []).extend(work.get("usage", [])[seen:])
-            record(job, capability, status, reason)
+            if limit:
+                hold(job, capability, limit, reason)
+            else:
+                record(job, capability, status, reason)
             step = policy.next_step(job)
     return dict(details, status=status, capability=capability, reason=reason, next=step, task=target)
 
@@ -559,6 +591,10 @@ def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
                 details = action(job, qk, target)
             else:
                 details = action(job, qk)
+        except Limited as error:
+            hold(job, capability, error.limit, str(error))
+            return {"status": "limited", "capability": capability, "reason": str(error), "limit": error.limit,
+                    "next": policy.next_step(job)}
         except (Blocked, gitops.GitError) as error:
             record(job, capability, "blocked", str(error))
             return {"status": "blocked", "capability": capability, "reason": str(error), "next": policy.next_step(job)}

@@ -63,6 +63,8 @@ Rules the code enforces, not the prompt:
 
 `qk-harness run JOB` (also `resume`) runs each next step until a gate, a blocked step, a person's decision or the end; two task turns run at once, each in its own `qk agent run` process. Before it starts, it clears tasks left `running` by a process that is gone. It never builds over a branch commit the job did not record, and `pr.open` reuses a pull request that already exists.
 
+A turn that stops at its runtime's usage limit (qk reports it as `limit` in `qk agent run`) does not fail the job and uses no fix round: the job records `limits` and its next step becomes `wait: the <runtime> usage limit until HH:MM, then …`. Tasks whose turns use another runtime go on. `qk-harness run --until HH:MM` sleeps until two minutes after the reset (30 minutes when the runtime named no time), notifies (macOS), retries and carries on, at most three waits and never past the deadline; `--wait-limits` waits without a deadline and `--no-wait-limits` turns waiting off. Without them, `run` stops with `stopped: limited`, and running it again later retries. `status` shows the limits, and the ledger record carries `limited`, so `qk brief` shows `waiting for <runtime> limit until HH:MM`.
+
 `approve JOB STAGE` records a person's approval. `abort JOB --reason TEXT` stops a job for good and lists the branches and worktrees it leaves for you to inspect or remove.
 
 When a job stops (done, blocked, aborted, or waiting for a decision; not at an approval gate) it is recorded in qk's evidence ledger with `qk log run --producer "qk-harness <version>"`, so it shows in `qk show`, `qk stats` and `qk brief`. A blocked card names qk-harness as the tool that resumes it.

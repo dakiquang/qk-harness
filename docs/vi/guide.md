@@ -63,6 +63,8 @@ Các luật do code ép, không do prompt:
 
 `qk-harness run JOB` (cũng là `resume`) chạy từng bước tiếp theo tới cổng, bước bị chặn, chỗ cần người quyết hoặc kết thúc; hai lượt task chạy cùng lúc, mỗi lượt một tiến trình `qk agent run`. Trước khi chạy, nó gỡ trạng thái "đang chạy" của task mà tiến trình đã mất. Nó không build đè lên commit mà job không ghi nhận, và `pr.open` dùng lại pull request đã có.
 
+Lượt bị dừng vì giới hạn hạn mức của runtime (qk báo bằng trường `limit` của `qk agent run`) không làm job thất bại và không tốn vòng sửa: job ghi `limits` và bước tiếp theo thành `wait: the <runtime> usage limit until HH:MM, then …`. Task dùng runtime khác vẫn chạy tiếp. `qk-harness run --until HH:MM` ngủ tới hai phút sau giờ mở lại (30 phút nếu runtime không nêu giờ), báo (macOS), thử lại rồi chạy tiếp, tối đa ba lần chờ và không quá hạn chót; `--wait-limits` chờ mà không có hạn chót, `--no-wait-limits` tắt việc chờ. Không có các cờ này, `run` dừng với `stopped: limited`, và chạy lại sau sẽ thử lại. `status` hiện các giới hạn, và bản ghi trong sổ mang `limited`, nên `qk brief` hiện `waiting for <runtime> limit until HH:MM`.
+
 `approve JOB STAGE` ghi quyết định duyệt của người. `abort JOB --reason TEXT` dừng hẳn job và liệt kê các nhánh, worktree còn lại để bạn xem hoặc xoá.
 
 Khi job dừng (xong, bị chặn, bị huỷ, hoặc chờ người quyết; không tính chờ ở cổng duyệt), nó được ghi vào sổ bằng chứng của qk bằng `qk log run --producer "qk-harness <phiên bản>"`, nên hiện trong `qk show`, `qk stats` và `qk brief`. Card bị chặn ghi qk-harness là công cụ chạy tiếp nó.

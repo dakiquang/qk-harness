@@ -22,3 +22,7 @@ All notable changes to this project are documented here. The format follows
   repeats a commit or a pull request.
 - `qk-harness eval CASE` measures the harness on qk's building eval cases.
 - `bin/qk-harness` command that works through a symlink; guide and measurements in English and Vietnamese.
+- Usage limits: a turn qk reports as stopped by a runtime's usage limit waits for the reset instead of failing the
+  job or using a fix round; tasks on other runtimes go on. `run --until HH:MM` (or `--wait-limits`) sleeps until
+  the reset and carries on, with macOS notifications; `status` and the ledger record show the limit. Needs qk
+  v0.10.0, now pinned in `qk.lock`.

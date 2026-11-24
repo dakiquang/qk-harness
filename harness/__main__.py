@@ -50,6 +50,10 @@ def parser():
                        help="review only the integrated branch, not each task on its own")
     run = commands.add_parser("run", aliases=["resume"], help="run each next step until a gate, a block or the end")
     run.add_argument("job")
+    run.add_argument("--wait-limits", action=argparse.BooleanOptionalAction, default=None,
+                     help="sleep until a usage limit resets and carry on (default: on with --until)")
+    run.add_argument("--until", metavar="HH:MM", type=clock,
+                     help="never wait for a usage limit past this local time")
     abort = commands.add_parser("abort", help="stop a job for good; branches and worktrees stay for inspection")
     abort.add_argument("job")
     abort.add_argument("--reason", default="")
@@ -77,11 +81,24 @@ def parser():
     return root
 
 
+def clock(text):
+    try:
+        hour, minute = (int(part) for part in text.split(":"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not HH:MM")
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        raise argparse.ArgumentTypeError(f"{text!r} is not HH:MM")
+    return text
+
+
 def summary(job):
     return {"id": job["id"], "size": job["size"], "repo": job["repo"], "base": job["base"], "task": job["task"],
             "impl": job["impl"], "review": job["review"], "approvals": sorted(job["approvals"]),
             "plan": job["plan"]["file"] if job["plan"] else None, "tasks": list(job["tasks"]),
-            "integration": job["integration"]["branch"], "pr_url": job["pr_url"], "next": policy.next_step(job)}
+            "integration": job["integration"]["branch"], "pr_url": job["pr_url"],
+            "limits": {name: {"reset_at": limit.get("reset_at"), "until": policy.until(limit)}
+                       for name, limit in (job.get("limits") or {}).items()},
+            "next": policy.next_step(job)}
 
 
 def main(argv=None):
@@ -121,7 +138,9 @@ def main(argv=None):
                 reply = evaluate.run_evals(args.case, qk, args.impl, args.review, repeat=args.repeat,
                                            contract=not args.no_contract)
             elif args.command in ("run", "resume"):
-                reply = coordinator.run(args.job, qk)
+                deadline = coordinator.deadline_at(args.until) if args.until else None
+                wait = args.wait_limits if args.wait_limits is not None else deadline is not None
+                reply = coordinator.run(args.job, qk, wait_limits=wait, deadline=deadline)
             else:
                 reply = capabilities.run(args.job, args.command, qk, getattr(args, "target", None),
                                          expect_red=getattr(args, "expect_red", False), fix=getattr(args, "fix", False))

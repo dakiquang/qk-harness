@@ -4,6 +4,7 @@ import fcntl
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -54,6 +55,21 @@ def gh(cwd, *args):
     if proc.returncode != 0:
         raise GitError(f"gh {' '.join(args[:2])} failed: {(proc.stderr or proc.stdout).strip()[-500:]}")
     return proc.stdout.strip()
+
+
+def discard(worktree):
+    """Drop uncommitted changes and untracked files in a harness-owned worktree."""
+    git(worktree, "reset", "-q", "--hard", "HEAD")
+    git(worktree, "clean", "-fdq")
+
+
+def notify(title, text):
+    """A macOS notification; nothing where osascript is missing. Text is quoted for AppleScript."""
+    if not shutil.which("osascript"):
+        return
+    quoted = '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    subprocess.run(["osascript", "-e", f'display notification {quoted} with title "{title}"'],
+                   capture_output=True, check=False)
 
 
 @contextmanager

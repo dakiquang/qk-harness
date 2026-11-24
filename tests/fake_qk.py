@@ -8,6 +8,9 @@ the commit id. Behaviour comes from environment variables:
 - FAKE_QK_SCENARIO: `done`, `blocked` or `error` for agent run, log run and eval grade (default done)
 - FAKE_QK_LOG: a file that receives one JSON line per call: argv and stdin
 - FAKE_QK_SLEEP: seconds agent run waits before answering; FAKE_QK_PID: file that receives its process id
+- FAKE_QK_LIMIT: a file; while it exists, its JSON `{"runtime", "reset_at"}` makes agent run with that runtime
+  stop at its usage limit (blocked, with `limit` set as qk reports it); `"partial": true` first writes a file in
+  --cwd of a write turn, as an agent stopped mid-turn would
 """
 
 from pathlib import Path
@@ -47,6 +50,17 @@ if command == "agent run":
         fail()
     status = "done" if scenario == "done" else "blocked"
     spec = argv[argv.index("--spec") + 1]
+    held = Path(os.environ.get("FAKE_QK_LIMIT") or "/nonexistent")
+    if held.is_file():
+        limit = json.loads(held.read_text())
+        if spec.split(":", 1)[0] == limit["runtime"]:
+            if limit.pop("partial", False) and "--write" in argv:  # the agent edited files before the limit
+                Path(argv[argv.index("--cwd") + 1], "partial.txt").write_text("half done\n")
+            reason = spec + " exited 1: You've hit your limit"
+            reply({"contract": 1, "status": "blocked", "reason": reason,
+                   "family": "openai" if spec.startswith("codex") else "anthropic", "spec": spec, "result": None,
+                   "text": "", "usage": None, "lessons": [], "events": None, "seconds": 0,
+                   "limit": dict(limit, message="You've hit your limit")}, 2)
     if os.environ.get("FAKE_QK_AGENT"):  # a scripted agent acts in --cwd and replies like a real one
         import re, subprocess
         cwd = argv[argv.index("--cwd") + 1]
