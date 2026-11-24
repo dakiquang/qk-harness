@@ -67,6 +67,16 @@ A turn that stops at its runtime's usage limit (qk reports it as `limit` in `qk 
 
 `approve JOB STAGE` records a person's approval. `grant-fix JOB TARGET [--reason TEXT]` gives a task (until the tasks are integrated) or `integration` one more fix round once its own is used, when it still fails its checks or has serious findings that all name a file and a line; anything else is refused, and the job's log keeps the decision and its reason. `abort JOB --reason TEXT` stops a job for good and lists the branches and worktrees it leaves for you to inspect or remove.
 
+`qk-harness status` without a job lists unfinished jobs; use `--line` for status lines. A runtime adapter can read them by adding `qk-harness status --line` to `~/.config/qk/status-commands`. Lines look like this; several jobs that are not running share one line:
+
+```text
+harness aaea46 · review.run eval · 1/2 tasks
+harness aaea46 · waits: approve plan
+harness aaea46 · claude limit until 23:50
+harness aaea46 · task api stopped mid-step · qk-harness run
+harness 7 jobs not running (qk-harness status)
+```
+
 When a job stops (done, blocked, aborted, or waiting for a decision; not at an approval gate) it is recorded in qk's evidence ledger with `qk log run --producer "qk-harness <version>"`, so it shows in `qk show`, `qk stats` and `qk brief`. A blocked card names qk-harness as the tool that resumes it.
 
 ## Measuring

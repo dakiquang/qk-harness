@@ -1,7 +1,10 @@
 """qk-harness command line. Each capability is one command; `next` in every reply says what to run after it."""
 
 import argparse
+from datetime import datetime, timedelta
 import json
+import os
+import re
 from pathlib import Path
 import sys
 
@@ -64,7 +67,10 @@ def parser():
     measure.add_argument("--repeat", type=positive_int, default=1, help="number of sequential runs (default: 1)")
     measure.add_argument("--no-contract", action="store_true", help="measure without the contract stage")
     status = commands.add_parser("status", help="print a job and its next step")
-    status.add_argument("job")
+    status.add_argument("job", nargs="?")
+    formats = status.add_mutually_exclusive_group()
+    formats.add_argument("--line", action="store_true")
+    formats.add_argument("--json", action="store_true")
     approve = commands.add_parser("approve", help="record a person's approval of one stage")
     approve.add_argument("job")
     approve.add_argument("stage", choices=("plan", "contract", "build", "integrate"))
@@ -105,12 +111,139 @@ def summary(job):
             "next": policy.next_step(job)}
 
 
+STAGES = ["plan", "contract", "tasks", "integrate", "review", "pr"]
+
+
+def pid_alive(pid):
+    try:
+        pid = int(pid)
+        if pid <= 0:
+            return False
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except (ValueError, TypeError, ProcessLookupError, OverflowError):
+        return False
+
+
+def created(job_id):
+    """A job's start time from its id (local `YYYYmmdd-HHMMSS-…`), in the job log's time format."""
+    try:
+        return datetime.strptime(job_id[:15], "%Y%m%d-%H%M%S").astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        return None
+
+
+def status_item(job):
+    tasks = job["tasks"]
+    count = sum(policy.task_ok(task, job) for task in tasks.values())
+    integration = job["integration"]
+    if job["plan"] is None:
+        stage = "plan"
+    elif not policy.contract_ok(job):
+        stage = "contract"
+    elif count != len(tasks):
+        stage = "tasks"
+    elif not integration["merged"]:
+        stage = "integrate"
+    elif not policy.green(integration["verify"]) or not policy.review_ok(integration["review"]):
+        stage = "review"
+    else:
+        stage = "pr"
+    next_step = policy.next_step(job)
+    waiting = None
+    if policy.limit_wait(next_step):
+        match = re.search(r"the (.+?) usage limit ", next_step)
+        if match:
+            runtime = match.group(1)
+            reset = policy.reset_time((job.get("limits") or {}).get(runtime) or {})
+            waiting = {"limit": runtime, "until": reset.strftime("%H:%M") if reset else None}
+    elif next_step.startswith(("a person decides", "approve ")):
+        waiting = {"person": next_step}
+    running = [f"{task['running']['capability']} {name}" for name, task in tasks.items()
+               if task.get("running") and pid_alive(task["running"].get("pid"))]
+    if not running and gitops.lock_held(state.job_dir(job["id"]) / "job.lock"):
+        running = ["step"]
+    # A task marked running by a process that is gone: the policy still says to wait for it, but only a new
+    # `run` (which recovers it first) moves the job on.
+    stale = [name for name, task in tasks.items() if task.get("running") and not pid_alive(task["running"].get("pid"))]
+    if stale and not running:
+        waiting = {"person": f"task {stale[0]} stopped mid-step"}
+        next_step = f"run {job['id']} (recovers task {stale[0]})"
+    return {"source": "qk-harness", "id": job["id"], "title": job["task"][:60], "stage": stage,
+            "step": STAGES.index(stage) + 1, "steps": len(STAGES),
+            "since": job["log"][-1].get("at") if job.get("log") else created(job["id"]), "waiting_for": waiting,
+            "next": next_step, "running": running, "tasks_ok": count, "tasks_total": len(tasks)}
+
+
+def status_listing():
+    items = []
+    try:
+        directories = sorted(state.jobs_root().iterdir())
+    except OSError:
+        return {"contract": 1, "items": items}
+    for directory in directories:
+        try:
+            job = state.load(directory.name)
+            if not job.get("aborted") and not job.get("pr_url"):
+                item = status_item(job)
+                if not item["next"].startswith("done"):
+                    items.append(item)
+        except (state.JobError, OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+            continue
+    return {"contract": 1, "items": items}
+
+
+def recent(item, now=None):
+    """Status lines show a job that runs, waits for a usage limit, or changed in the last day; `--json` lists all."""
+    if item["running"] or (item["waiting_for"] or {}).get("limit"):
+        return True
+    try:
+        since = datetime.strptime(item["since"], "%Y-%m-%dT%H:%M:%S%z")  # the job log's own format
+    except (TypeError, ValueError):
+        return False
+    return (now or datetime.now(since.tzinfo)) - since < timedelta(hours=24)
+
+
+def status_line(item):
+    prefix = f"harness {item['id'][-6:]} · "
+    waiting = item["waiting_for"]
+    if item["running"]:
+        detail = "running: step" if item["running"] == ["step"] else \
+            f"{', '.join(item['running'])} · {item['tasks_ok']}/{item['tasks_total']} tasks"
+    elif waiting and "limit" in waiting:
+        detail = f"{waiting['limit']} limit" + (f" until {waiting['until']}" if waiting["until"] else "")
+    elif waiting:
+        person = waiting["person"]
+        detail = "waits: " + person.replace(item["id"] + " ", "", 1) if person.startswith("approve ") \
+            else f"{person} · qk-harness run" if person.endswith("stopped mid-step") else "person decides"
+    else:
+        detail = "next: " + item["next"].replace(item["id"] + " ", "", 1).replace(" " + item["id"], "", 1)
+    return (prefix + detail.replace("\n", " "))[:80]
+
+
 def main(argv=None):
-    args = parser().parse_args(argv)
+    argument_parser = parser()
+    args = argument_parser.parse_args(argv)
+    if args.command == "status" and args.job and (args.line or args.json):
+        argument_parser.error("status --line/--json cannot be used with a job id")
     args.lock = args.lock or args.root_lock or str(LOCK)
     try:
         if args.command == "status":
-            reply = summary(state.load(args.job))
+            if args.job:
+                reply = summary(state.load(args.job))
+            else:
+                reply = status_listing()
+                if args.line:
+                    shown = [item for item in reply["items"] if recent(item)]
+                    idle = [item for item in shown if not item["running"] and not item["waiting_for"]]
+                    for item in shown:
+                        if item not in idle or len(idle) == 1:
+                            print(status_line(item))
+                    if len(idle) > 1:  # jobs not running (stopped, or never started): one line; details in --json
+                        print(f"harness {len(idle)} jobs not running (qk-harness status)")
+                    return 0
         elif args.command == "approve":
             reply = capabilities.approve(args.job, args.stage)
         elif args.command == "grant-fix":

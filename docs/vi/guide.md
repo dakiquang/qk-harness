@@ -67,6 +67,16 @@ Lượt bị dừng vì giới hạn hạn mức của runtime (qk báo bằng t
 
 `approve JOB STAGE` ghi quyết định duyệt của người. `grant-fix JOB TARGET [--reason TEXT]` cho một task (trước khi tích hợp) hoặc `integration` thêm một vòng sửa khi vòng của nó đã dùng mà vẫn fail check hoặc còn finding nghiêm trọng đều chỉ rõ file và dòng; trường hợp khác bị từ chối, và log của job giữ quyết định cùng lý do. `abort JOB --reason TEXT` dừng hẳn job và liệt kê các nhánh, worktree còn lại để bạn xem hoặc xoá.
 
+`qk-harness status` không kèm job liệt kê các job chưa hoàn tất; dùng `--line` để hiện mỗi job trên một dòng. Runtime adapter có thể đọc các dòng này bằng cách thêm `qk-harness status --line` vào `~/.config/qk/status-commands`. Các dòng trông như sau; nhiều job không chạy được gộp thành một dòng:
+
+```text
+harness aaea46 · review.run eval · 1/2 tasks
+harness aaea46 · waits: approve plan
+harness aaea46 · claude limit until 23:50
+harness aaea46 · task api stopped mid-step · qk-harness run
+harness 7 jobs not running (qk-harness status)
+```
+
 Khi job dừng (xong, bị chặn, bị huỷ, hoặc chờ người quyết; không tính chờ ở cổng duyệt), nó được ghi vào sổ bằng chứng của qk bằng `qk log run --producer "qk-harness <phiên bản>"`, nên hiện trong `qk show`, `qk stats` và `qk brief`. Card bị chặn ghi qk-harness là công cụ chạy tiếp nó.
 
 ## Đo

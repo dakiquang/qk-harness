@@ -28,3 +28,5 @@ All notable changes to this project are documented here. The format follows
   v0.10.0, now pinned in `qk.lock`.
 - `grant-fix JOB TARGET [--reason TEXT]`: a person gives a task or the integrated branch one more fix round after
   its own is used; refused unless a fix round could take what is still wrong. The job's log keeps the decision.
+- `status` without a job lists unfinished jobs as JSON, or with `--line` as one status line each, for runtime
+  adapters.
