@@ -11,6 +11,25 @@ Phần bền của một agent harness là các cam kết: ai được làm gì,
 
 Ba vai tách riêng: agent làm và kiểm, harness chạy git, người quyết ở các cổng và merge.
 
+```mermaid
+flowchart TB
+    person(["Người"]) -- "start, approve, grant-fix, abort" --> harness
+    subgraph harness ["qk-harness"]
+        direction LR
+        coord["run<br/>đi theo next"] --> caps["Tám capability<br/>kiểm, làm một bước, ghi lại"]
+        caps <--> state[("Trạng thái job<br/>state.json, worktree")]
+    end
+    harness -- "lượt agent, job đã dừng" --> qk
+    harness -- "worktree, merge" --> repo[("Repository của bạn<br/>nhánh qk/slug")]
+    harness -- "push, một PR" --> github["GitHub"]
+    subgraph qk ["qk, ghim bằng qk.lock"]
+        direction LR
+        cli["Hợp đồng CLI<br/>qk agent run, qk log run, qk eval"] --> runtimes["Claude Code, Codex, omp"]
+        cli --> ledger[("Sổ bằng chứng")]
+    end
+    qk -- "job đã dừng" --> brief["qk brief<br/>cổng duyệt hiện ở qk-harness status"]
+```
+
 ## Một job
 
 `qk-harness start --repo PATH --task TEXT` tạo một job; chưa chạy gì. Tuỳ chọn:

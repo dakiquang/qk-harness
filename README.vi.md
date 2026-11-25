@@ -8,6 +8,40 @@ qk-harness phụ thuộc qk một chiều. Nó chỉ dùng [hợp đồng CLI](h
 
 Việc chỉ có một task thì dùng `qk-run` của qk: rẻ và nhanh hơn. Harness dành cho việc tách được thành nhiều task build song song.
 
+## Cách hoạt động
+
+Một job Medium, loại mặc định. Job Large dừng thêm để duyệt sau hợp đồng, sau build và sau tích hợp; `--no-contract` bỏ bước hợp đồng, và mỗi task có một vòng sửa riêng trước khi người quyết, giống nhánh tích hợp. [Hướng dẫn](docs/vi/guide.md) giải thích từng capability.
+
+```mermaid
+flowchart TB
+    start(["qk-harness start --task"]) --> plan["plan.write<br/>plan chỉ đọc: qk-verify và các task sở hữu đường dẫn riêng"]
+    plan --> gate{{"Người duyệt plan"}}
+    gate --> contract["contract.write<br/>test định nghĩa thế nào là xong"]
+    contract --> creview{"contract.review<br/>bởi model họ khác"}
+    creview -- "có finding, lần đầu" --> cfix["contract.write --fix<br/>một lần sửa"]
+    cfix --> creview
+    creview -- "vẫn không đạt sau lần sửa" --> cedit{{"Người sửa và commit hợp đồng,<br/>rồi contract.review lại"}}
+    cedit --> creview
+    creview -- "đạt" --> red{"verify.run --expect-red<br/>hợp đồng có fail trước không?"}
+    red -- "đã pass sẵn" --> cabort(["Hợp đồng không chứng minh được gì<br/>người huỷ job"])
+    red -- "fail" --> buildA & buildB
+    subgraph tasks ["Hai task cùng lúc"]
+        buildA["build.run task A"] --> checkA{"verify.run, review.run A"}
+        buildB["build.run task B"] --> checkB{"verify.run, review.run B"}
+        checkA -- "hỏng: build.run A --fix, một lần" --> buildA
+        checkB -- "hỏng: build.run B --fix, một lần" --> buildB
+    end
+    checkA -- "vẫn hỏng sau vòng sửa" --> decide
+    checkB -- "vẫn hỏng sau vòng sửa" --> decide
+    checkA & checkB -- "xanh" --> integ["integrate.run<br/>merge đúng các commit đã kiểm vào qk/slug"]
+    integ --> icheck{"verify.run, review.run<br/>nhánh tích hợp"}
+    icheck -- "xanh" --> pr["pr.open<br/>push, một pull request"]
+    icheck -- "check hỏng, hoặc finding có file và dòng" --> fix["build.run --fix<br/>một vòng"]
+    fix --> icheck
+    icheck -- "vẫn hỏng sau vòng sửa" --> decide{{"Người quyết<br/>grant-fix hoặc abort"}}
+    pr --> merge(["Người review và merge"])
+```
+
 ## Cài
 
 Cần Python 3.9+, `git`, `gh` (để mở pull request) và các runtime bạn dùng (`codex`, `claude` hoặc `omp`). Không cần gói Python nào.
