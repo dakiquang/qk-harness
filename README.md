@@ -31,14 +31,14 @@ flowchart TB
         checkA -- "fails: build.run A --fix, once" --> buildA
         checkB -- "fails: build.run B --fix, once" --> buildB
     end
-    checkA -- "round used" --> decide
-    checkB -- "round used" --> decide
+    checkA -- "still failing after the round" --> decide
+    checkB -- "still failing after the round" --> decide
     checkA & checkB -- "green" --> integ["integrate.run<br/>merges exactly the checked commits onto qk/slug"]
     integ --> icheck{"verify.run, review.run<br/>integrated branch"}
     icheck -- "green" --> pr["pr.open<br/>push, one pull request"]
     icheck -- "failed checks, or findings with file and line" --> fix["build.run --fix<br/>one round"]
     fix --> icheck
-    icheck -- "round used" --> decide{{"A person decides<br/>grant-fix or abort"}}
+    icheck -- "still failing after the round" --> decide{{"A person decides<br/>grant-fix or abort"}}
     pr --> merge(["A person reviews and merges"])
 ```
 

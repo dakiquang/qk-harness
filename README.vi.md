@@ -31,14 +31,14 @@ flowchart TB
         checkA -- "hỏng: build.run A --fix, một lần" --> buildA
         checkB -- "hỏng: build.run B --fix, một lần" --> buildB
     end
-    checkA -- "hết vòng sửa" --> decide
-    checkB -- "hết vòng sửa" --> decide
+    checkA -- "vẫn hỏng sau vòng sửa" --> decide
+    checkB -- "vẫn hỏng sau vòng sửa" --> decide
     checkA & checkB -- "xanh" --> integ["integrate.run<br/>merge đúng các commit đã kiểm vào qk/slug"]
     integ --> icheck{"verify.run, review.run<br/>nhánh tích hợp"}
     icheck -- "xanh" --> pr["pr.open<br/>push, một pull request"]
     icheck -- "check hỏng, hoặc finding có file và dòng" --> fix["build.run --fix<br/>một vòng"]
     fix --> icheck
-    icheck -- "hết vòng sửa" --> decide{{"Người quyết<br/>grant-fix hoặc abort"}}
+    icheck -- "vẫn hỏng sau vòng sửa" --> decide{{"Người quyết<br/>grant-fix hoặc abort"}}
     pr --> merge(["Người review và merge"])
 ```
 
