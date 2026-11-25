@@ -322,6 +322,7 @@ Put each problem in "findings" as {{"severity": "blocker|important|nit", "file":
         raise Blocked(f"the read-only review changed {worktree}")
     contract["review"] = {"spec": job["review"], "status": result["status"],
                           "findings": list(result.get("findings") or []), "commit": head}
+    contract.pop("accepted", None)  # a person accepted the findings of the earlier review, not of this one
     contract["commit"] = head  # a person may have edited and committed the contract after a failed review
     return {"findings": len(contract["review"]["findings"]), "serious": len(policy.serious(contract["review"]))}
 
@@ -625,3 +626,17 @@ def grant_fix(job_id, target, reason=""):
         item["granted_rounds"] = item.get("granted_rounds", 0) + 1
         record(job, f"grant-fix {target}", "done", reason)
         return {"status": "done", "target": target, "reason": "", "next": policy.next_step(job)}
+
+
+def accept_contract(job_id, reason):
+    """A person's decision to go on with a contract whose review still fails after its revision round."""
+    with state.locked(job_id) as job:
+        try:
+            policy.check_accept(job, reason)
+        except policy.Refused as refused:
+            return {"status": "refused", "reason": str(refused), "next": policy.next_step(job)}
+        contract, reason = job["contract"], reason.strip()
+        contract["accepted"] = {"reason": reason, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "findings": policy.serious(contract["review"])}
+        record(job, "accept-contract", "done", reason)
+        return {"status": "done", "reason": "", "next": policy.next_step(job)}

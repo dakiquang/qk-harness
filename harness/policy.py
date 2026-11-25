@@ -69,7 +69,12 @@ def contract_ok(job):
     if not contract_on(job):
         return True
     contract = job["contract"]
-    return contract is not None and review_ok(contract.get("review")) and contract.get("red") is True
+    return contract_passed(contract) and contract.get("red") is True
+
+
+def contract_passed(contract):
+    """The contract's review passed, or a person accepted its findings after the revision round."""
+    return contract is not None and (review_ok(contract.get("review")) or bool(contract.get("accepted")))
 
 
 def task_review_on(job):
@@ -179,11 +184,12 @@ def _next_step(job):
         return f"contract.write {job_id}"
     elif contract.get("review") is None:
         return f"contract.review {job_id}"
-    elif not review_ok(contract["review"]):
+    elif not contract_passed(contract):
         if contract.get("revisions", 0) < MAX_FIX_ROUNDS:
             return f"contract.write {job_id} --fix"
         return (f"a person decides: the contract review did not pass after its revision; edit the contract in "
-                f"{job['integration']['worktree']} and commit it, then contract.review {job_id}")
+                f"{job['integration']['worktree']} and commit it, then contract.review {job_id}, or accept its "
+                f"findings with accept-contract {job_id} --reason TEXT")
     elif contract.get("red") is None:
         return f"verify.run {job_id} integration --expect-red"
     elif contract["red"] is False:
@@ -293,6 +299,23 @@ def check_grant(job, target):
              f"{label} has nothing a fix round can take")
 
 
+def check_accept(job, reason):
+    """Raise Refused unless a person may accept the findings of the contract's failed review: its revision round is
+    used and it has not been checked red yet."""
+    _require(not job.get("aborted"), "the job is aborted")
+    _require(job["plan"] is not None, "there is no plan yet")
+    _require(plan_unchanged(job), "the plan changed after it was written; restore it first")
+    _require(contract_on(job), "this job was started without a contract")
+    contract = job["contract"]
+    _require(contract is not None, "there is no contract yet")
+    _require(contract.get("review") is not None, "the contract has no review yet")
+    _require(not review_ok(contract["review"]), "the contract passed its review; there is nothing to accept")
+    _require(contract.get("red") is None, "the contract was already checked red; it can no longer change")
+    _require(contract.get("revisions", 0) >= MAX_FIX_ROUNDS,
+             f"the contract still has its revision round; run contract.write {job['id']} --fix")
+    _require(isinstance(reason, str) and reason.strip(), "--reason must not be blank")
+
+
 def check(job, capability, target=None, *, expect_red=False, fix=False):
     """Raise Refused unless `capability` may run now on `target` (a task name or "integration")."""
     _require(capability in CAPABILITIES, f"unknown capability {capability!r}")
@@ -323,12 +346,12 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
         return
     if capability == "verify.run" and target == "integration" and expect_red:
         _require(contract is not None, "there is no contract yet")
-        _require(review_ok(contract.get("review")), "the contract has not passed its review")
+        _require(contract_passed(contract), "the contract has not passed its review")
         _require(contract.get("red") is None, "the contract was already checked red")
         return
     if contract_on(job):
         _require(contract is not None, "there is no contract yet")
-        _require(review_ok(contract.get("review")), "the contract has not passed its review")
+        _require(contract_passed(contract), "the contract has not passed its review")
         _require(contract.get("red") is True, "the contract tests were not shown to fail before the build")
         _require(gate_open(job, "contract"), "the contract stage is not approved")
     if target != "integration" and capability in ("build.run", "verify.run", "review.run"):

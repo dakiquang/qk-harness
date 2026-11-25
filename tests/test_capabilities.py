@@ -287,6 +287,87 @@ class CapabilityTests(Sandbox):
         coordinator.abort(job_id, "enough")
         self.assertEqual(capabilities.grant_fix(job_id, "api")["reason"], "the job is aborted")
 
+    # --- accepting the contract's review findings
+
+    def contract_decision(self, size="medium"):
+        """A job whose contract review still fails after its revision round: a person decides."""
+        job_id = self.new(size)
+        self.advance(job_id)
+        capabilities.approve(job_id, "plan")
+        step, _ = self.advance(job_id, agent="contract-twice")
+        self.assertTrue(step.startswith("a person decides: the contract review did not pass"), step)
+        return job_id
+
+    def test_accept_contract_is_refused_while_the_revision_round_is_left(self):
+        job_id = self.new()
+        self.advance(job_id)
+        capabilities.approve(job_id, "plan")
+        self.advance(job_id, until=f"contract.write {job_id} --fix", agent="contract-twice")
+        reply = capabilities.accept_contract(job_id, "good enough")
+        self.assertEqual((reply["status"], reply["reason"]),
+                         ("refused", f"the contract still has its revision round; run contract.write {job_id} --fix"))
+        self.assertNotIn("accepted", state.load(job_id)["contract"])
+
+    def test_accept_contract_is_refused_when_the_review_passed(self):
+        job_id = self.new()
+        self.advance(job_id)
+        capabilities.approve(job_id, "plan")
+        self.advance(job_id, until=f"verify.run {job_id} integration --expect-red")
+        reply = capabilities.accept_contract(job_id, "good enough")
+        self.assertEqual((reply["status"], reply["reason"]),
+                         ("refused", "the contract passed its review; there is nothing to accept"))
+
+    def test_accept_contract_needs_a_reason(self):
+        job_id = self.contract_decision()
+        reply = capabilities.accept_contract(job_id, "   ")
+        self.assertEqual((reply["status"], reply["reason"]), ("refused", "--reason must not be blank"))
+        self.assertNotIn("accepted", state.load(job_id)["contract"])
+        reply = capabilities.accept_contract(job_id, 1)
+        self.assertEqual((reply["status"], reply["reason"]), ("refused", "--reason must not be blank"))
+        self.assertNotIn("accepted", state.load(job_id)["contract"])
+
+    def test_a_person_can_accept_the_contract_findings_and_the_job_goes_on(self):
+        job_id = self.contract_decision()
+        step = policy.next_step(state.load(job_id))
+        self.assertIn(f"contract.review {job_id}", step)
+        self.assertIn(f"accept-contract {job_id} --reason", step)
+        reason = "stricter than the plan; accepted"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["accept-contract", job_id, "--reason", reason]), 0)
+        job = state.load(job_id)
+        contract = job["contract"]
+        self.assertEqual(contract["accepted"]["reason"], reason)
+        self.assertTrue(contract["accepted"]["findings"])
+        self.assertEqual(contract["accepted"]["findings"], policy.serious(contract["review"]))
+        self.assertEqual({key: job["log"][-1][key] for key in ("capability", "status", "reason")},
+                         {"capability": "accept-contract", "status": "done", "reason": reason})
+        self.assertEqual(policy.next_step(job), f"verify.run {job_id} integration --expect-red")
+        reply = self.run_cap(job_id, "verify.run", "integration", expect_red=True)
+        self.assertEqual((reply["status"], reply["red"]), ("done", True))
+        reply = capabilities.accept_contract(job_id, reason)
+        self.assertEqual((reply["status"], reply["reason"]),
+                         ("refused", "the contract was already checked red; it can no longer change"))
+        step, reply = self.advance(job_id)
+        self.assertTrue(step.startswith("done:"), (step, reply))
+
+    def test_an_accepted_large_contract_still_waits_for_its_gate(self):
+        job_id = self.contract_decision("large")
+        self.assertEqual(capabilities.accept_contract(job_id, "accepted")["status"], "done")
+        step, _ = self.advance(job_id)
+        self.assertEqual(step, f"approve {job_id} contract")
+        reply = self.run_cap(job_id, "build.run", "api")
+        self.assertEqual((reply["status"], reply["reason"]), ("refused", "the contract stage is not approved"))
+        self.assertEqual(capabilities.approve(job_id, "contract")["status"], "done")
+
+    def test_a_new_contract_review_clears_the_acceptance(self):
+        job_id = self.contract_decision()
+        self.assertEqual(capabilities.accept_contract(job_id, "accepted")["status"], "done")
+        with mock.patch.dict(os.environ, {"FAKE_AGENT": "contract-twice"}):
+            self.assertEqual(self.run_cap(job_id, "contract.review")["status"], "done")
+        job = state.load(job_id)
+        self.assertNotIn("accepted", job["contract"])
+        self.assertTrue(policy.next_step(job).startswith("a person decides: the contract review did not pass"))
+
     def test_plans_must_be_checkable_and_split_cleanly(self):
         for deviation, reason in (("no-verify", "no non-empty ```qk-verify``` block"),
                                   ("overlap", "tasks own overlapping paths: api and cli")):

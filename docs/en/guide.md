@@ -13,7 +13,7 @@ Three roles stay separate: agents make and check, the harness runs git, and a pe
 
 ```mermaid
 flowchart TB
-    person(["Person"]) -- "start, approve, grant-fix, abort" --> harness
+    person(["Person"]) -- "start, approve, grant-fix, accept-contract, abort" --> harness
     subgraph harness ["qk-harness"]
         direction LR
         coord["run<br/>follows next"] --> caps["Eight capabilities<br/>check, do one step, record"]
@@ -61,10 +61,10 @@ Ownership overlaps and role families are checked when the plan is written, befor
 |---|---|---|
 | `plan.write` | nothing | clean checkout; plan not approved |
 | `contract.write [--fix]` | the integration worktree, only under the contract paths | plan approved; `--fix` once after a failed contract review |
-| `contract.review` | nothing | a contract; reviewer from another family |
-| `build.run TASK [--fix]` | the task's own worktree, only its paths | contract reviewed and shown red (and approved for large jobs); `--fix` once, and once more per `grant-fix` |
+| `contract.review` | nothing | a contract; reviewer from another family; a new review clears an acceptance |
+| `build.run TASK [--fix]` | the task's own worktree, only its paths | contract reviewed or accepted, and shown red (and approved for large jobs); `--fix` once, and once more per `grant-fix` |
 | `build.run integration --fix` | the integration worktree, only the tasks' paths | integrated branch failed its checks or review; once, and once more per `grant-fix` |
-| `verify.run TARGET [--expect-red]` | nothing; runs one verification at a time across jobs | a built task, or the integrated branch |
+| `verify.run TARGET [--expect-red]` | nothing; runs one verification at a time across jobs | a built task, or the integrated branch; `--expect-red`: a contract whose review passed or was accepted |
 | `review.run TARGET` | nothing | target passed its checks; reviewer from another family than every implementer it checks |
 | `integrate.run` | the local branch `qk/<slug>` | every task built, checked and reviewed; nothing running |
 | `pr.open` | the remote: pushes `qk/<slug>`, opens one pull request | integrated branch checked and reviewed; last gate approved; the active `gh` account can push |
@@ -86,7 +86,7 @@ Rules the code enforces, not the prompt:
 
 A turn that stops at its runtime's usage limit (qk reports it as `limit` in `qk agent run`) does not fail the job and uses no fix round: the job records `limits` and its next step becomes `wait: the <runtime> usage limit until HH:MM, then …`. Tasks whose turns use another runtime go on. `qk-harness run --until HH:MM` sleeps until two minutes after the reset (30 minutes when the runtime named no time), notifies (macOS), retries and carries on, at most three waits and never past the deadline; `--wait-limits` waits without a deadline and `--no-wait-limits` turns waiting off. Without them, `run` stops with `stopped: limited`, and running it again later retries. `status` shows the limits, and the ledger record carries `limited`, so `qk brief` shows `waiting for <runtime> limit until HH:MM`.
 
-`approve JOB STAGE` records a person's approval. `grant-fix JOB TARGET [--reason TEXT]` gives a task (until the tasks are integrated) or `integration` one more fix round once its own is used, when it still fails its checks or has serious findings that all name a file and a line; anything else is refused, and the job's log keeps the decision and its reason. `abort JOB --reason TEXT` stops a job for good and lists the branches and worktrees it leaves for you to inspect or remove.
+`approve JOB STAGE` records a person's approval. `grant-fix JOB TARGET [--reason TEXT]` gives a task (until the tasks are integrated) or `integration` one more fix round once its own is used, when it still fails its checks or has serious findings that all name a file and a line; anything else is refused, and the job's log keeps the decision and its reason. `accept-contract JOB --reason TEXT` lets the job go on with a contract whose review still fails after its one revision round and that has not been checked red yet; a blank reason is refused. The contract keeps the reason, the time and the serious findings accepted, the job's log keeps the decision, and a new `contract.review` clears the acceptance. The red check and, for large jobs, the contract gate still apply. `abort JOB --reason TEXT` stops a job for good and lists the branches and worktrees it leaves for you to inspect or remove.
 
 `qk-harness status` without a job lists unfinished jobs; use `--line` for status lines. A runtime adapter can read them by adding `qk-harness status --line` to `~/.config/qk/status-commands`. Lines look like this; several jobs that are not running share one line:
 
@@ -105,6 +105,7 @@ qk-harness status --line                     # every unfinished job, one line ea
 qk-harness run JOB --until 07:00             # overnight: wait out usage limits, but never past 07:00
 qk-harness grant-fix JOB api --reason "the review findings are worth one more try"
 qk-harness run JOB                           # the granted round runs: build.run JOB api --fix
+qk-harness accept-contract JOB --reason "the findings are stricter than the plan"
 qk-harness abort JOB --reason "replaced by a smaller plan"
 ```
 
@@ -125,7 +126,7 @@ The summary also includes each run's stop state, reason, next step, pass result 
 ## Limits
 
 - Real agents have been measured on two single-task eval cases. One real two-task job (Codex building, Claude reviewing) reached its pull request; it needed a fix to the build prompt and one fix round granted by a person. The same two-task work, run parallel and sequential without a contract, reached `pr.open` both times ([measurements](measurements.md)).
-- The one Large job tried stopped before the contract gate. It went through six contract reviews; each one accepted the earlier points as fixed and found a new test that was stricter than the plan, the last coming from an ambiguous sentence in the plan itself. There is no cap on reviews after a person edits the contract, and the person at the gate cannot waive a finding that is only "stricter than the plan"; a later version needs one or the other. `status JOB` now lists those findings.
+- The one Large job tried stopped before the contract gate. It went through six contract reviews; each one accepted the earlier points as fixed and found a new test that was stricter than the plan, the last coming from an ambiguous sentence in the plan itself. There is still no cap on reviews after a person edits the contract, but once the revision round is used a person can now accept the remaining findings with `accept-contract JOB --reason TEXT` instead of editing again. `status JOB` lists those findings.
 - One job runs at a time per coordinator; there is no daemon or queue.
 - The harness does not merge, release, tag, delete branches or force-push, and has no capability that could.
 - Runtimes: `codex`, `claude` and `omp`, as qk supports them.
