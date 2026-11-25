@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-25
+
+First release.
+
 ### Added
 
 - `qk.lock` pins qk by repository, tag, commit and CLI contract version; `harness/qk_cli.py` is the only place
@@ -36,3 +40,6 @@ All notable changes to this project are documented here. The format follows
   them.
 - `eval` keeps `dir` on the invocation directory for a single run, and a grade with no criteria no longer counts
   as passed.
+
+[Unreleased]: https://github.com/dakiquang/qk-harness/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/dakiquang/qk-harness/releases/tag/v0.1.0

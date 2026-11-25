@@ -105,7 +105,8 @@ Bản tổng hợp cũng ghi trạng thái dừng, lý do, bước tiếp theo, 
 
 ## Giới hạn
 
-- Agent thật đã được đo trên hai bài eval một task. Một job thật có hai task (Codex build, Claude review) đã đi tới pull request; job đó cần sửa prompt build và một vòng sửa do người cấp thêm.
+- Agent thật đã được đo trên hai bài eval một task. Một job thật có hai task (Codex build, Claude review) đã đi tới pull request; job đó cần sửa prompt build và một vòng sửa do người cấp thêm. Cùng việc hai task đó, chạy song song và tuần tự không có hợp đồng, đều tới được `pr.open` ([số đo](measurements.md)).
+- Job Large duy nhất từng chạy đã dừng trước cổng hợp đồng. Nó qua sáu lượt review hợp đồng; lượt nào cũng nhận các điểm cũ đã sửa xong nhưng lại tìm ra một test mới "chặt hơn plan", lượt cuối do chính câu chữ hai nghĩa trong plan. Chưa có giới hạn số lần review lại sau khi người sửa hợp đồng, và người duyệt ở cổng chưa bỏ qua được finding chỉ thuộc loại "chặt hơn plan"; bản sau cần một trong hai cách. Giờ `status JOB` đã liệt kê các finding đó.
 - Mỗi coordinator chạy một job; không có daemon hay hàng đợi.
 - Harness không merge, phát hành, gắn tag, xoá nhánh hay force-push, và không có capability nào làm được những việc đó.
 - Runtime: `codex`, `claude` và `omp`, theo mức qk hỗ trợ.

@@ -105,7 +105,8 @@ The summary also includes each run's stop state, reason, next step, pass result 
 
 ## Limits
 
-- Real agents have been measured on two single-task eval cases. One real two-task job (Codex building, Claude reviewing) reached its pull request; it needed a fix to the build prompt and one fix round granted by a person.
+- Real agents have been measured on two single-task eval cases. One real two-task job (Codex building, Claude reviewing) reached its pull request; it needed a fix to the build prompt and one fix round granted by a person. The same two-task work, run parallel and sequential without a contract, reached `pr.open` both times ([measurements](measurements.md)).
+- The one Large job tried stopped before the contract gate. It went through six contract reviews; each one accepted the earlier points as fixed and found a new test that was stricter than the plan, the last coming from an ambiguous sentence in the plan itself. There is no cap on reviews after a person edits the contract, and the person at the gate cannot waive a finding that is only "stricter than the plan"; a later version needs one or the other. `status JOB` now lists those findings.
 - One job runs at a time per coordinator; there is no daemon or queue.
 - The harness does not merge, release, tag, delete branches or force-push, and has no capability that could.
 - Runtimes: `codex`, `claude` and `omp`, as qk supports them.
