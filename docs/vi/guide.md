@@ -27,7 +27,7 @@ flowchart TB
         cli["Hợp đồng CLI<br/>qk agent run, qk log run, qk eval"] --> runtimes["Claude Code, Codex, omp"]
         cli --> ledger[("Sổ bằng chứng")]
     end
-    qk -- "qk brief" --> decide{{"Người quyết"}}
+    qk -- "job đã dừng" --> brief["qk brief<br/>cổng duyệt hiện ở qk-harness status"]
 ```
 
 ## Một job

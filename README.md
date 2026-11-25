@@ -10,25 +10,30 @@ For work with one task, use qk's own `qk-run`: it is cheaper and faster. The har
 
 ## How it works
 
-A Medium job, the default. A Large job also stops for approval after the contract, the build and the integration; `--no-contract` skips the contract stage, and each task also gets one fix round of its own. The [guide](docs/en/guide.md) explains every capability.
+A Medium job, the default. A Large job also stops for approval after the contract, the build and the integration; `--no-contract` skips the contract stage, and each task gets one fix round of its own before a person decides, like the integrated branch. The [guide](docs/en/guide.md) explains every capability.
 
 ```mermaid
 flowchart TB
     start(["qk-harness start --task"]) --> plan["plan.write<br/>read-only plan: qk-verify and tasks that own disjoint paths"]
     plan --> gate{{"A person approves the plan"}}
     gate --> contract["contract.write<br/>tests that define done"]
-    contract --> creview["contract.review<br/>by another model family"]
-    creview --> red{"verify.run --expect-red<br/>does the contract fail first?"}
-    red -- "already passes" --> decide
+    contract --> creview{"contract.review<br/>by another model family"}
+    creview -- "findings" --> cfix["contract.write --fix<br/>one revision"]
+    cfix --> creview
+    creview -- "still failing after the revision" --> cdecide
+    creview -- "passes" --> red{"verify.run --expect-red<br/>does the contract fail first?"}
+    red -- "already passes" --> cdecide{{"A person edits the contract or aborts"}}
     red -- "fails" --> buildA & buildB
     subgraph tasks ["Two tasks at once"]
-        buildA["build.run task A"] --> checkA["verify.run, review.run A"]
-        buildB["build.run task B"] --> checkB["verify.run, review.run B"]
+        buildA["build.run task A"] --> checkA{"verify.run, review.run A"}
+        buildB["build.run task B"] --> checkB{"verify.run, review.run B"}
+        checkA -- "fix round" --> buildA
+        checkB -- "fix round" --> buildB
     end
-    checkA & checkB --> integ["integrate.run<br/>merges exactly the checked commits onto qk/slug"]
+    checkA & checkB -- "green" --> integ["integrate.run<br/>merges exactly the checked commits onto qk/slug"]
     integ --> icheck{"verify.run, review.run<br/>integrated branch"}
     icheck -- "green" --> pr["pr.open<br/>push, one pull request"]
-    icheck -- "located problems" --> fix["build.run --fix<br/>one round"]
+    icheck -- "failed checks, or findings with file and line" --> fix["build.run --fix<br/>one round"]
     fix --> icheck
     icheck -- "round used" --> decide{{"A person decides<br/>grant-fix or abort"}}
     pr --> merge(["A person reviews and merges"])

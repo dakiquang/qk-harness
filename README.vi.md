@@ -10,25 +10,30 @@ Việc chỉ có một task thì dùng `qk-run` của qk: rẻ và nhanh hơn. H
 
 ## Cách hoạt động
 
-Một job Medium, loại mặc định. Job Large dừng thêm để duyệt sau hợp đồng, sau build và sau tích hợp; `--no-contract` bỏ bước hợp đồng, và mỗi task cũng có một vòng sửa riêng. [Hướng dẫn](docs/vi/guide.md) giải thích từng capability.
+Một job Medium, loại mặc định. Job Large dừng thêm để duyệt sau hợp đồng, sau build và sau tích hợp; `--no-contract` bỏ bước hợp đồng, và mỗi task có một vòng sửa riêng trước khi người quyết, giống nhánh tích hợp. [Hướng dẫn](docs/vi/guide.md) giải thích từng capability.
 
 ```mermaid
 flowchart TB
     start(["qk-harness start --task"]) --> plan["plan.write<br/>plan chỉ đọc: qk-verify và các task sở hữu đường dẫn riêng"]
     plan --> gate{{"Người duyệt plan"}}
     gate --> contract["contract.write<br/>test định nghĩa thế nào là xong"]
-    contract --> creview["contract.review<br/>bởi model họ khác"]
-    creview --> red{"verify.run --expect-red<br/>hợp đồng có fail trước không?"}
-    red -- "đã pass sẵn" --> decide
+    contract --> creview{"contract.review<br/>bởi model họ khác"}
+    creview -- "có finding" --> cfix["contract.write --fix<br/>một lần sửa"]
+    cfix --> creview
+    creview -- "vẫn không đạt sau lần sửa" --> cdecide
+    creview -- "đạt" --> red{"verify.run --expect-red<br/>hợp đồng có fail trước không?"}
+    red -- "đã pass sẵn" --> cdecide{{"Người sửa hợp đồng hoặc huỷ"}}
     red -- "fail" --> buildA & buildB
     subgraph tasks ["Hai task cùng lúc"]
-        buildA["build.run task A"] --> checkA["verify.run, review.run A"]
-        buildB["build.run task B"] --> checkB["verify.run, review.run B"]
+        buildA["build.run task A"] --> checkA{"verify.run, review.run A"}
+        buildB["build.run task B"] --> checkB{"verify.run, review.run B"}
+        checkA -- "vòng sửa" --> buildA
+        checkB -- "vòng sửa" --> buildB
     end
-    checkA & checkB --> integ["integrate.run<br/>merge đúng các commit đã kiểm vào qk/slug"]
+    checkA & checkB -- "xanh" --> integ["integrate.run<br/>merge đúng các commit đã kiểm vào qk/slug"]
     integ --> icheck{"verify.run, review.run<br/>nhánh tích hợp"}
     icheck -- "xanh" --> pr["pr.open<br/>push, một pull request"]
-    icheck -- "lỗi có vị trí" --> fix["build.run --fix<br/>một vòng"]
+    icheck -- "check hỏng, hoặc finding có file và dòng" --> fix["build.run --fix<br/>một vòng"]
     fix --> icheck
     icheck -- "hết vòng sửa" --> decide{{"Người quyết<br/>grant-fix hoặc abort"}}
     pr --> merge(["Người review và merge"])

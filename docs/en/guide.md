@@ -27,7 +27,7 @@ flowchart TB
         cli["CLI contract<br/>qk agent run, qk log run, qk eval"] --> runtimes["Claude Code, Codex, omp"]
         cli --> ledger[("Evidence ledger")]
     end
-    qk -- "qk brief" --> decide{{"A person decides"}}
+    qk -- "stopped jobs" --> brief["qk brief<br/>gates show in qk-harness status"]
 ```
 
 ## A job
