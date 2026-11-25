@@ -18,18 +18,21 @@ flowchart TB
     plan --> gate{{"Người duyệt plan"}}
     gate --> contract["contract.write<br/>test định nghĩa thế nào là xong"]
     contract --> creview{"contract.review<br/>bởi model họ khác"}
-    creview -- "có finding" --> cfix["contract.write --fix<br/>một lần sửa"]
+    creview -- "có finding, lần đầu" --> cfix["contract.write --fix<br/>một lần sửa"]
     cfix --> creview
-    creview -- "vẫn không đạt sau lần sửa" --> cdecide
+    creview -- "vẫn không đạt sau lần sửa" --> cedit{{"Người sửa và commit hợp đồng,<br/>rồi contract.review lại"}}
+    cedit --> creview
     creview -- "đạt" --> red{"verify.run --expect-red<br/>hợp đồng có fail trước không?"}
-    red -- "đã pass sẵn" --> cdecide{{"Người sửa hợp đồng hoặc huỷ"}}
+    red -- "đã pass sẵn" --> cabort(["Hợp đồng không chứng minh được gì<br/>người huỷ job"])
     red -- "fail" --> buildA & buildB
     subgraph tasks ["Hai task cùng lúc"]
         buildA["build.run task A"] --> checkA{"verify.run, review.run A"}
         buildB["build.run task B"] --> checkB{"verify.run, review.run B"}
-        checkA -- "vòng sửa" --> buildA
-        checkB -- "vòng sửa" --> buildB
+        checkA -- "hỏng: build.run A --fix, một lần" --> buildA
+        checkB -- "hỏng: build.run B --fix, một lần" --> buildB
     end
+    checkA -- "hết vòng sửa" --> decide
+    checkB -- "hết vòng sửa" --> decide
     checkA & checkB -- "xanh" --> integ["integrate.run<br/>merge đúng các commit đã kiểm vào qk/slug"]
     integ --> icheck{"verify.run, review.run<br/>nhánh tích hợp"}
     icheck -- "xanh" --> pr["pr.open<br/>push, một pull request"]

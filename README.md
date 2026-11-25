@@ -18,18 +18,21 @@ flowchart TB
     plan --> gate{{"A person approves the plan"}}
     gate --> contract["contract.write<br/>tests that define done"]
     contract --> creview{"contract.review<br/>by another model family"}
-    creview -- "findings" --> cfix["contract.write --fix<br/>one revision"]
+    creview -- "findings, first time" --> cfix["contract.write --fix<br/>one revision"]
     cfix --> creview
-    creview -- "still failing after the revision" --> cdecide
+    creview -- "still failing after the revision" --> cedit{{"A person edits and commits the contract,<br/>then contract.review again"}}
+    cedit --> creview
     creview -- "passes" --> red{"verify.run --expect-red<br/>does the contract fail first?"}
-    red -- "already passes" --> cdecide{{"A person edits the contract or aborts"}}
+    red -- "already passes" --> cabort(["The contract proves nothing<br/>a person aborts the job"])
     red -- "fails" --> buildA & buildB
     subgraph tasks ["Two tasks at once"]
         buildA["build.run task A"] --> checkA{"verify.run, review.run A"}
         buildB["build.run task B"] --> checkB{"verify.run, review.run B"}
-        checkA -- "fix round" --> buildA
-        checkB -- "fix round" --> buildB
+        checkA -- "fails: build.run A --fix, once" --> buildA
+        checkB -- "fails: build.run B --fix, once" --> buildB
     end
+    checkA -- "round used" --> decide
+    checkB -- "round used" --> decide
     checkA & checkB -- "green" --> integ["integrate.run<br/>merges exactly the checked commits onto qk/slug"]
     integ --> icheck{"verify.run, review.run<br/>integrated branch"}
     icheck -- "green" --> pr["pr.open<br/>push, one pull request"]
