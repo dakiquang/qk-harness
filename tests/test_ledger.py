@@ -66,11 +66,19 @@ class LedgerTests(Sandbox):
         self.assertEqual(reply["stopped"], "blocked")
         [(_, data)] = self.logged()
         self.assertEqual((data["stage"], data["blocked_at"]), ("blocked", "implementing"))
+        # qk brief reads why from the state.json the record points to; the ledger keeps no reason text.
+        saved = json.loads((state.job_dir(job_id) / "state.json").read_text())
+        blocked = [entry for entry in saved["log"] if entry["status"] == "blocked"][-1]
+        self.assertTrue(saved["reason"])
+        self.assertEqual(saved["reason"], blocked["reason"])
 
     def test_an_abort_is_recorded(self):
         job_id = self.started()
+        self.run_job(job_id, "outside")
+        self.assertIn("reason", state.load(job_id))
         reply = coordinator.finish(job_id, self.qk, coordinator.abort(job_id, "not needed"))
         self.assertEqual(reply["ledger"]["stage"], "aborted")
+        self.assertNotIn("reason", state.load(job_id))  # an old blocked reason does not outlive the stop
 
     def test_eval_jobs_stay_out_of_the_ledger(self):
         job_id = self.new()

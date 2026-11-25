@@ -31,6 +31,16 @@ def outcome(job, step, stopped=None):
     return None
 
 
+def blocked_reason(job, step):
+    """Why a blocked job stopped, for qk brief: it reads a top-level `reason` from the job's state.json because the
+    ledger keeps no reason text. A person's decision names itself; otherwise the latest blocked step says why."""
+    if step.startswith("a person decides"):
+        return step
+    last = next((entry for entry in reversed(job["log"]) if entry["status"] in ("blocked", "refused", "limited")),
+                None)
+    return (last or {}).get("reason") or step
+
+
 def run_state(job, stage, limited=False):
     """The job in the shape `qk log run` reads (qk's CLI contract, version 1). `limited`: the job stopped to
     wait for a usage limit, not for a failure."""
@@ -89,6 +99,10 @@ def record(job_id, qk, step, stopped=None):
         if stage is None:
             return None
         data = run_state(job, stage, limited=stopped == "limited")
+        if stage == "blocked":
+            job["reason"] = blocked_reason(job, step)
+        else:
+            job.pop("reason", None)
         unchanged = dict(data, ledger_revision=None)
         digest = hashlib.sha256(json.dumps(unchanged, sort_keys=True).encode("utf-8")).hexdigest()
         if job.get("logged") == digest:
