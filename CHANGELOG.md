@@ -31,3 +31,8 @@ All notable changes to this project are documented here. The format follows
 - `status` without a job lists unfinished jobs as JSON, or with `--line` as one status line each, for runtime
   adapters.
 - `eval --no-task-review` measures a case with only the integrated review.
+- `status JOB` lists the serious review findings (`target`, `severity`, `file`, `line`, `claim`) of the contract, a
+  task or the integrated branch when they are why a person has to decide, so nobody opens `state.json` to read
+  them.
+- `eval` keeps `dir` on the invocation directory for a single run, and a grade with no criteria no longer counts
+  as passed.

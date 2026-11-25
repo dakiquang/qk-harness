@@ -6,6 +6,7 @@ import io
 import os
 from pathlib import Path
 import sys
+import time
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,8 +49,48 @@ class EvaluateTests(Sandbox):
         self.assertTrue(json.loads(results[0].read_text())["passed"])
         # The pass share is checked where it cannot coincide with a count: 0.5 in the repeat test.
 
+    def test_single_summary_returns_invocation_directory_and_time_patch_points(self):
+        self.assertIs(evaluate.time, time)
+        with mock.patch.object(evaluate, "time", wraps=time) as clock:
+            clock.strftime.return_value = "fixed-time"
+            clock.monotonic.side_effect = [100, 107]
+            result = evaluate.run_evals("csv-export", self.qk, "codex:", "claude:")
+        summary_path = Path(result["dir"]) / "summary.json"
+        self.assertTrue(summary_path.is_file())
+        self.assertEqual(Path(result["runs"][0]["dir"]), summary_path.parent / "run-1")
+        self.assertEqual(result["seconds"], 7)
+        clock.strftime.assert_called()
+        self.assertEqual(clock.monotonic.call_count, 2)
+
+    def test_empty_criteria_fail_single_and_repeated_runs(self):
+        original_grade = qk_cli.Qk.eval_grade
+
+        def grade(qk, *args, **kwargs):
+            result = original_grade(qk, *args, **kwargs)
+            result.data["criteria"] = []
+            result.data["passed"] = True
+            return result
+
+        with mock.patch.object(qk_cli.Qk, "eval_grade", grade):
+            for repeat in (1, 2):
+                with self.subTest(repeat=repeat):
+                    result = evaluate.run_evals("csv-export", self.qk, "codex:", "claude:", repeat=repeat)
+                    saved_summary = json.loads((Path(result["dir"]) / "summary.json").read_text())
+                    self.assertEqual(result["pass_share"], 0)
+                    self.assertEqual(saved_summary["pass_share"], 0)
+                    for run, saved_run in zip(result["runs"], saved_summary["runs"]):
+                        self.assertEqual(run["criteria"], {})
+                        self.assertIs(run["passed"], False)
+                        self.assertIs(saved_run["passed"], False)
+                        saved_result = json.loads((Path(run["dir"]) / "result.json").read_text())
+                        self.assertIs(saved_result["passed"], False)
+                    if repeat == 1:
+                        self.assertIs(result["passed"], False)
+                        self.assertIs(saved_summary["passed"], False)
+
     def test_invocations_started_in_the_same_second_have_distinct_directories(self):
-        with mock.patch("harness.evaluate.time.strftime", return_value="same-second"):
+        with mock.patch.object(evaluate, "time", wraps=time) as clock:
+            clock.strftime.return_value = "same-second"
             self.invoke_eval()
             self.invoke_eval()
         summaries = list((self.tmp / "state" / "evals").rglob("summary.json"))

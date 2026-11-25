@@ -89,7 +89,7 @@ qk-harness run JOB                           # the granted round runs: build.run
 qk-harness abort JOB --reason "replaced by a smaller plan"
 ```
 
-A job waiting for a person says so in `next`, for example `a person decides: task api has serious review findings that a fix round cannot take`. The findings are in the job's `state.json` (`tasks.<name>.review.findings`, or `integration.review.findings`). Then either grant one more round or abort the job.
+A job waiting for a person says so in `next`, for example `a person decides: task api has serious review findings that a fix round cannot take`. Run `qk-harness status JOB` to see `findings`: the serious review findings behind that decision, for the contract (`target` is `contract`), a task, or `integration`. Each entry has `target`, `severity`, `file`, `line`, and `claim`; a missing location is shown as null. The list can be empty when the decision has another cause. Depending on the circumstances, grant an eligible target another round or abort the job.
 
 When a job stops (done, blocked, aborted, or waiting for a decision; not at an approval gate) it is recorded in qk's evidence ledger with `qk log run --producer "qk-harness <version>"`, so it shows in `qk show`, `qk stats` and `qk brief`. A blocked card names qk-harness as the tool that resumes it.
 

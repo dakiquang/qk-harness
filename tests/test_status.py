@@ -40,6 +40,109 @@ class StatusTests(Sandbox):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.main(['status', job_id, '--json'])
 
+    def test_findings_for_each_task_waiting_for_a_person(self):
+        job_id = self.new()
+        self.advance(job_id)
+        capabilities.approve(job_id, 'plan')
+        self.advance(job_id, until='build.run')
+        with state.locked(job_id) as job:
+            for task in job['tasks'].values():
+                task.update(commit='abc', verify={'results': [{'exit': 0}]}, fix_rounds=1)
+            job['tasks']['api']['review'] = {'status': 'done', 'findings': [
+                {'severity': 'BLOCKER', 'file': 'api.py', 'line': 4, 'claim': 'broken'},
+                {'severity': 'minor', 'file': 'api.py', 'line': 5, 'claim': 'style'}]}
+            job['tasks']['cli']['review'] = {'status': 'done', 'findings': [
+                {'severity': 'Important', 'claim': 'no location'}]}
+        result = json.loads(self.listing(job_id))
+        self.assertEqual(result['findings'], [
+            {'target': 'api', 'severity': 'BLOCKER', 'file': 'api.py', 'line': 4, 'claim': 'broken'},
+            {'target': 'cli', 'severity': 'Important', 'file': None, 'line': None, 'claim': 'no location'}])
+        with state.locked(job_id) as job:
+            job['tasks']['api']['fix_rounds'] = 0
+            job['tasks']['cli']['review'] = {'status': 'done', 'findings': []}
+        self.assertEqual(json.loads(self.listing(job_id))['findings'], [])
+
+    def test_integrated_findings_and_empty_decisions(self):
+        job_id = self.new()
+        self.advance(job_id)
+        capabilities.approve(job_id, 'plan')
+        self.advance(job_id, until='build.run')
+        with state.locked(job_id) as job:
+            job['tasks']['api']['review'] = {'status': 'done', 'findings': [
+                {'severity': 'blocker', 'claim': 'stale'}]}
+            job['integration'].update(merged=True, commit='abc', verify={'results': [{'exit': 0}]}, fix_rounds=1,
+                                      review={'status': 'done', 'findings': [
+                                          {'severity': 'important', 'file': None, 'claim': 'integrated'},
+                                          {'severity': 'minor', 'claim': 'ignored'}]})
+        result = json.loads(self.listing(job_id))
+        self.assertTrue(result['next'].startswith('a person decides'))
+        self.assertEqual(result['findings'], [
+            {'target': 'integration', 'severity': 'important', 'file': None, 'line': None, 'claim': 'integrated'}])
+        with state.locked(job_id) as job:
+            job['integration']['fix_rounds'] = 0
+            job['integration']['review']['findings'][0].update(file='app.py', line=3)
+        self.assertEqual(json.loads(self.listing(job_id))['findings'], [])
+        with state.locked(job_id) as job:
+            job['integration']['fix_rounds'] = 1
+            job['integration']['verify'] = {'results': [{'exit': 1}]}
+            job['integration']['review'] = None
+        result = json.loads(self.listing(job_id))
+        self.assertTrue(result['next'].startswith('a person decides'))
+        self.assertEqual(result['findings'], [])
+        # A decision with another cause does not list review findings that are still recorded.
+        with state.locked(job_id) as job:
+            job['integration']['review'] = {'status': 'done', 'findings': [{'severity': 'blocker', 'claim': 'old'}]}
+        result = json.loads(self.listing(job_id))
+        self.assertIn('fails its checks', result['next'])
+        self.assertEqual(result['findings'], [])
+        job = state.load(job_id)
+        with open(job['plan']['file'], 'a', encoding='utf-8') as plan:
+            plan.write('\nedited by hand\n')
+        result = json.loads(self.listing(job_id))
+        self.assertIn('changed after it was written', result['next'])
+        self.assertEqual(result['findings'], [])
+
+    def test_contract_review_findings_when_its_revision_is_used(self):
+        job_id = self.new()
+        self.advance(job_id)
+        capabilities.approve(job_id, 'plan')
+        self.advance(job_id, until='build.run')
+        with state.locked(job_id) as job:
+            job['contract'].update(revisions=1, review={'status': 'done', 'findings': [
+                {'severity': 'important', 'file': 'tests/test_api.py', 'line': 7, 'claim': 'stricter than the plan'},
+                {'severity': 'nit', 'claim': 'naming'}]})
+        result = json.loads(self.listing(job_id))
+        self.assertIn('the contract review did not pass', result['next'])
+        self.assertEqual(result['findings'], [{'target': 'contract', 'severity': 'important',
+                                               'file': 'tests/test_api.py', 'line': 7,
+                                               'claim': 'stricter than the plan'}])
+        with state.locked(job_id) as job:
+            job['contract']['revisions'] = 0
+        result = json.loads(self.listing(job_id))
+        self.assertFalse(result['next'].startswith('a person decides'))
+        self.assertEqual(result['findings'], [])
+
+    def test_task_failing_checks_does_not_list_its_old_findings(self):
+        job_id = self.new()
+        self.advance(job_id)
+        capabilities.approve(job_id, 'plan')
+        self.advance(job_id, until='build.run')
+        with state.locked(job_id) as job:
+            job['tasks']['api'].update(commit='abc', verify={'results': [{'exit': 1}]}, fix_rounds=1,
+                                       review={'status': 'done', 'findings': [{'severity': 'blocker', 'claim': 'old'}]})
+        result = json.loads(self.listing(job_id))
+        self.assertIn('task api still fails its checks', result['next'])
+        self.assertEqual(result['findings'], [])
+        with state.locked(job_id) as job:
+            job['tasks']['api']['verify'] = {'results': [{'exit': 0}]}
+        self.assertEqual(json.loads(self.listing(job_id))['findings'][0]['claim'], 'old')
+        job = state.load(job_id)
+        with open(job['plan']['file'], 'a', encoding='utf-8') as plan:
+            plan.write('\nedited by hand\n')
+        result = json.loads(self.listing(job_id))
+        self.assertIn('changed after it was written', result['next'])
+        self.assertEqual(result['findings'], [])
+
     def test_approval_and_limit(self):
         job_id = self.new()
         self.advance(job_id)

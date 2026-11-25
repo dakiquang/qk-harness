@@ -89,7 +89,7 @@ qk-harness run JOB                           # vòng được cấp sẽ chạy:
 qk-harness abort JOB --reason "thay bằng một plan nhỏ hơn"
 ```
 
-Job đang chờ người thì `next` nói rõ, ví dụ `a person decides: task api has serious review findings that a fix round cannot take`. Các finding nằm trong `state.json` của job (`tasks.<tên>.review.findings`, hoặc `integration.review.findings`). Sau đó chọn: cấp thêm một vòng, hoặc huỷ job.
+Job đang chờ người thì `next` nói rõ, ví dụ `a person decides: task api has serious review findings that a fix round cannot take`. Chạy `qk-harness status JOB` để xem `findings`: các finding review nghiêm trọng dẫn tới quyết định đó, của hợp đồng (`target` là `contract`), của một task, hoặc của `integration`. Mỗi mục có `target`, `severity`, `file`, `line` và `claim`; vị trí thiếu hiện là null. Danh sách có thể rỗng khi quyết định cần thiết vì lý do khác. Tuỳ trường hợp, cấp thêm một vòng cho target đủ điều kiện hoặc huỷ job.
 
 Khi job dừng (xong, bị chặn, bị huỷ, hoặc chờ người quyết; không tính chờ ở cổng duyệt), nó được ghi vào sổ bằng chứng của qk bằng `qk log run --producer "qk-harness <phiên bản>"`, nên hiện trong `qk show`, `qk stats` và `qk brief`. Card bị chặn ghi qk-harness là công cụ chạy tiếp nó.
 

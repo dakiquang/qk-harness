@@ -8,11 +8,8 @@ written from the job state; the harness has no other final message.
 
 import json
 import tempfile
+import time
 from pathlib import Path
-from time import monotonic, strftime
-from types import SimpleNamespace
-
-time = SimpleNamespace(monotonic=monotonic, strftime=strftime)
 
 from harness import capabilities, coordinator, policy, state
 from harness.qk_cli import state_root
@@ -113,7 +110,7 @@ def run_eval(case, qk, impl, review, contract=True, *, directory=None, task_revi
               "reason": reply.get("reason", ""), "next": reply.get("next"), "graded": graded_tree,
               "criteria": {item["name"]: item["passed"] for item in grade["criteria"]},
               "details": {item["name"]: item["detail"] for item in grade["criteria"] if not item["passed"]},
-              "passed": grade["passed"], "seconds": seconds, "totals": totals(job),
+              "passed": bool(grade["criteria"]) and grade["passed"], "seconds": seconds, "totals": totals(job),
               "baseline": baseline(qk, case)}
     (root / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     result["dir"] = str(root)
@@ -135,11 +132,11 @@ def run_evals(case, qk, impl, review, repeat=1, contract=True, task_review=True)
                      "tokens": result["totals"]["tokens"], "seconds": result["seconds"],
                      **{key: result[key] for key in ("stopped", "reason", "next", "passed", "baseline")}})
     summary = {"case": case, "runs": runs,
-               "pass_share": sum(all(run["criteria"].values()) for run in runs) / repeat}
+               "pass_share": sum(bool(run["criteria"]) and all(run["criteria"].values()) for run in runs) / repeat}
     if repeat == 1:
         summary.update({key: runs[0][key] for key in ("stopped", "reason", "next", "passed", "baseline")})
     (root / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    summary["dir"] = str(root)
     if repeat == 1:
         summary.update(result)
+    summary["dir"] = str(root)
     return summary

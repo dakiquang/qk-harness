@@ -103,13 +103,29 @@ def clock(text):
 
 
 def summary(job):
+    next_step = policy.next_step(job)
+    integration = job["integration"]
+    # Only a decision caused by review findings lists them; a changed plan or failing checks has another cause.
+    if next_step.startswith("a person decides: the contract review did not pass"):
+        targets = [("contract", job["contract"])]
+    elif integration["merged"]:
+        decides = next_step.startswith("a person decides: the integrated branch has serious review findings")
+        targets = [("integration", integration)] if decides else []
+    elif not policy.in_task_stage(job, next_step):
+        targets = []  # an earlier stage, such as a changed plan, needs the person first
+    else:
+        targets = [(name, task) for name, task in job["tasks"].items()
+                   if (policy.task_step(job, name, task) or "").startswith(
+                       f"a person decides: task {name} has serious review findings")]
+    findings = [{"target": name, **{key: finding.get(key) for key in ("severity", "file", "line", "claim")}}
+                for name, target in targets for finding in policy.serious(target["review"])]
     return {"id": job["id"], "size": job["size"], "repo": job["repo"], "base": job["base"], "task": job["task"],
             "impl": job["impl"], "review": job["review"], "approvals": sorted(job["approvals"]),
             "plan": job["plan"]["file"] if job["plan"] else None, "tasks": list(job["tasks"]),
             "integration": job["integration"]["branch"], "pr_url": job["pr_url"],
             "limits": {name: {"reset_at": limit.get("reset_at"), "until": policy.until(limit)}
                        for name, limit in (job.get("limits") or {}).items()},
-            "next": policy.next_step(job)}
+            "next": next_step, "findings": findings}
 
 
 STAGES = ["plan", "contract", "tasks", "integrate", "review", "pr"]

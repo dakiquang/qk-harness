@@ -252,12 +252,16 @@ def _task_step(job, name, task):
     return None
 
 
+def in_task_stage(job, step):
+    """Whether the job's next step (`step`, from next_step) belongs to its tasks rather than an earlier stage."""
+    words = step.split()
+    return (words[0] in ("build.run", "verify.run", "review.run") and len(words) > 2 and words[2] in job["tasks"]
+            or step.startswith(("wait: task ", "a person decides: task ")))
+
+
 def task_steps(job):
     """The capability steps tasks can take now, one per task, when the job is in its task stage."""
-    first, words = next_step(job), next_step(job).split()
-    in_tasks = (words[0] in ("build.run", "verify.run", "review.run") and len(words) > 2 and words[2] in job["tasks"]
-                or first.startswith(("wait: task ", "a person decides: task ")))
-    if not in_tasks:
+    if not in_task_stage(job, next_step(job)):
         return []
     steps = [task_step(job, name, task) for name, task in job["tasks"].items()]
     return [step for step in steps if step and step.split()[0] in CAPABILITIES]
