@@ -47,7 +47,7 @@ The same two-task work (three small fixes in `harness/evaluate.py`; review findi
 | Review findings | none | 3 nits |
 
 - Parallel tasks saved the length of the shorter task (about 110 s, 15% of the job) for the same tokens and result. About 245 s of each job is the full test suite on the integrated branch, which parallel tasks do not shorten.
-- The parallel job's branch was merged as [#21](https://github.com/dakiquang/qk-harness/pull/21), after a cross-review found two decisions with another cause for which `status` listed findings, and the contract's findings it left out.
+- The parallel job's branch was merged as [`7c501a4`](https://github.com/dakiquang/qk-harness/commit/7c501a4ea4ca9918af257e5fa60fade7e96e1089), after a cross-review found two decisions with another cause for which `status` listed findings, and the contract's findings it left out.
 
 ## Earlier runs that shaped the design
 

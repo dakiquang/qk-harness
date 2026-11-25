@@ -47,7 +47,7 @@ Cùng một việc có hai task (ba sửa nhỏ trong `harness/evaluate.py`; fin
 | Finding của review | không có | 3 nit |
 
 - Chạy song song tiết kiệm đúng thời gian của task ngắn hơn (khoảng 110 s, 15% thời gian job) với cùng số token và cùng kết quả. Khoảng 245 s của mỗi job là bộ test đầy đủ trên nhánh tích hợp, phần này song song không rút ngắn được.
-- Nhánh của job song song được merge thành [#21](https://github.com/dakiquang/qk-harness/pull/21), sau khi review chéo tìm ra hai loại quyết định có nguyên nhân khác mà `status` vẫn liệt kê finding, và finding của hợp đồng mà nó bỏ sót.
+- Nhánh của job song song được merge thành [`7c501a4`](https://github.com/dakiquang/qk-harness/commit/7c501a4ea4ca9918af257e5fa60fade7e96e1089), sau khi review chéo tìm ra hai loại quyết định có nguyên nhân khác mà `status` vẫn liệt kê finding, và finding của hợp đồng mà nó bỏ sót.
 
 ## Các lần chạy trước đã định hình thiết kế
 
