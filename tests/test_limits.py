@@ -51,21 +51,24 @@ class LimitTests(Sandbox):
 
     def test_a_limited_turn_waits_for_its_runtime_and_runs_again_when_the_job_runs_again(self):
         job_id = self.approved_job()
+        today = datetime.now().astimezone().date()
         reset = (datetime.now().astimezone() + timedelta(hours=1)).replace(microsecond=0)
         self.hold("claude", reset.isoformat())
         reply = coordinator.run(job_id, self.qk)
         self.assertEqual((reply["stopped"], reply["capability"]), ("limited", "contract.review"))
-        # Within an hour of midnight the reset falls tomorrow, and the wait names its date.
-        until = f"until {reset:%H:%M}" if reset.date() == datetime.now().astimezone().date() \
-            else f"until {reset:%Y-%m-%d %H:%M}"
-        self.assertEqual(reply["next"], f"wait: the claude usage limit {until}, then contract.review {job_id}")
+        # Within an hour of midnight the reset falls tomorrow, and the wait names its date; if midnight passes
+        # while the test runs, either form is right (test_a_reset_on_another_day_names_its_date pins the rule).
+        forms = {f"until {reset:%H:%M}" if reset.date() == day else f"until {reset:%Y-%m-%d %H:%M}"
+                 for day in (today, datetime.now().astimezone().date())}
+        self.assertIn(reply["next"], {f"wait: the claude usage limit {until}, then contract.review {job_id}"
+                                      for until in forms})
         job = state.load(job_id)
         self.assertEqual(job["limits"]["claude"]["reset_at"], reset.isoformat())
         self.assertEqual(job["log"][-1]["status"], "limited")
         self.assertEqual(job["usage"][-1]["status"], "limited")
         self.assertIsNone(job["contract"]["review"])  # not a failed review: no revision round is used
         summary = cli.summary(job)
-        self.assertEqual(summary["limits"]["claude"]["until"], until)
+        self.assertIn(summary["limits"]["claude"]["until"], forms)
         logged = self.logged_runs()[-1]
         self.assertEqual((logged["stage"], logged["limited"]), ("blocked", {"runtime": "claude",
                                                                            "reset_at": reset.isoformat()}))

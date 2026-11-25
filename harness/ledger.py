@@ -107,6 +107,7 @@ def record(job_id, qk, step, stopped=None):
         digest = hashlib.sha256(json.dumps(unchanged, sort_keys=True).encode("utf-8")).hexdigest()
         if job.get("logged") == digest:
             return None  # the recorded run is the same as the last one
+        state.save(job)  # the reason is on disk before the record that points qk brief to it exists
         reply = qk.log_run(data, f"qk-harness {__version__}", state.job_dir(job_id))
         if reply.code != 0 or not isinstance(reply.data, dict):
             return {"error": reply.stderr.strip()[-300:] or "qk log run failed"}

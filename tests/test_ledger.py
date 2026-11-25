@@ -62,7 +62,17 @@ class LedgerTests(Sandbox):
 
     def test_a_blocked_job_is_recorded_with_its_stage(self):
         job_id = self.started()
-        reply = self.run_job(job_id, "outside")
+        seen = []
+        original = type(self.qk).log_run
+
+        def log_run(qk, data, producer, state_dir):
+            # What qk brief would read the moment the record exists.
+            seen.append(json.loads((Path(state_dir) / "state.json").read_text()).get("reason"))
+            return original(qk, data, producer, state_dir)
+
+        with mock.patch.object(type(self.qk), "log_run", log_run):
+            reply = self.run_job(job_id, "outside")
+        self.assertTrue(seen and seen[-1])
         self.assertEqual(reply["stopped"], "blocked")
         [(_, data)] = self.logged()
         self.assertEqual((data["stage"], data["blocked_at"]), ("blocked", "implementing"))
