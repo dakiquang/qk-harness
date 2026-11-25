@@ -8,6 +8,32 @@ qk-harness phụ thuộc qk một chiều. Nó chỉ dùng [hợp đồng CLI](h
 
 Việc chỉ có một task thì dùng `qk-run` của qk: rẻ và nhanh hơn. Harness dành cho việc tách được thành nhiều task build song song.
 
+## Cách hoạt động
+
+Một job Medium, loại mặc định. Job Large dừng thêm để duyệt sau hợp đồng, sau build và sau tích hợp; `--no-contract` bỏ bước hợp đồng, và mỗi task cũng có một vòng sửa riêng. [Hướng dẫn](docs/vi/guide.md) giải thích từng capability.
+
+```mermaid
+flowchart TB
+    start(["qk-harness start --task"]) --> plan["plan.write<br/>plan chỉ đọc: qk-verify và các task sở hữu đường dẫn riêng"]
+    plan --> gate{{"Người duyệt plan"}}
+    gate --> contract["contract.write<br/>test định nghĩa thế nào là xong"]
+    contract --> creview["contract.review<br/>bởi model họ khác"]
+    creview --> red{"verify.run --expect-red<br/>hợp đồng có fail trước không?"}
+    red -- "đã pass sẵn" --> decide
+    red -- "fail" --> buildA & buildB
+    subgraph tasks ["Hai task cùng lúc"]
+        buildA["build.run task A"] --> checkA["verify.run, review.run A"]
+        buildB["build.run task B"] --> checkB["verify.run, review.run B"]
+    end
+    checkA & checkB --> integ["integrate.run<br/>merge đúng các commit đã kiểm vào qk/slug"]
+    integ --> icheck{"verify.run, review.run<br/>nhánh tích hợp"}
+    icheck -- "xanh" --> pr["pr.open<br/>push, một pull request"]
+    icheck -- "lỗi có vị trí" --> fix["build.run --fix<br/>một vòng"]
+    fix --> icheck
+    icheck -- "hết vòng sửa" --> decide{{"Người quyết<br/>grant-fix hoặc abort"}}
+    pr --> merge(["Người review và merge"])
+```
+
 ## Cài
 
 Cần Python 3.9+, `git`, `gh` (để mở pull request) và các runtime bạn dùng (`codex`, `claude` hoặc `omp`). Không cần gói Python nào.

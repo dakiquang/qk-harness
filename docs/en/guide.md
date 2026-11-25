@@ -11,6 +11,25 @@ The durable part of an agent harness is its commitments: who may do what, what m
 
 Three roles stay separate: agents make and check, the harness runs git, and a person decides at the gates and merges.
 
+```mermaid
+flowchart TB
+    person(["Person"]) -- "start, approve, grant-fix, abort" --> harness
+    subgraph harness ["qk-harness"]
+        direction LR
+        coord["run<br/>follows next"] --> caps["Eight capabilities<br/>check, do one step, record"]
+        caps <--> state[("Job state<br/>state.json, worktrees")]
+    end
+    harness -- "agent turns, stopped jobs" --> qk
+    harness -- "worktrees, merge" --> repo[("Your repository<br/>qk/slug branches")]
+    harness -- "push, one PR" --> github["GitHub"]
+    subgraph qk ["qk, pinned by qk.lock"]
+        direction LR
+        cli["CLI contract<br/>qk agent run, qk log run, qk eval"] --> runtimes["Claude Code, Codex, omp"]
+        cli --> ledger[("Evidence ledger")]
+    end
+    qk -- "qk brief" --> decide{{"A person decides"}}
+```
+
 ## A job
 
 `qk-harness start --repo PATH --task TEXT` creates a job; nothing runs yet. Options:

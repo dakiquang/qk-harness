@@ -8,6 +8,32 @@ qk-harness depends on qk one way. It uses only qk's versioned [CLI contract](htt
 
 For work with one task, use qk's own `qk-run`: it is cheaper and faster. The harness is for work that splits into tasks that can be built side by side.
 
+## How it works
+
+A Medium job, the default. A Large job also stops for approval after the contract, the build and the integration; `--no-contract` skips the contract stage, and each task also gets one fix round of its own. The [guide](docs/en/guide.md) explains every capability.
+
+```mermaid
+flowchart TB
+    start(["qk-harness start --task"]) --> plan["plan.write<br/>read-only plan: qk-verify and tasks that own disjoint paths"]
+    plan --> gate{{"A person approves the plan"}}
+    gate --> contract["contract.write<br/>tests that define done"]
+    contract --> creview["contract.review<br/>by another model family"]
+    creview --> red{"verify.run --expect-red<br/>does the contract fail first?"}
+    red -- "already passes" --> decide
+    red -- "fails" --> buildA & buildB
+    subgraph tasks ["Two tasks at once"]
+        buildA["build.run task A"] --> checkA["verify.run, review.run A"]
+        buildB["build.run task B"] --> checkB["verify.run, review.run B"]
+    end
+    checkA & checkB --> integ["integrate.run<br/>merges exactly the checked commits onto qk/slug"]
+    integ --> icheck{"verify.run, review.run<br/>integrated branch"}
+    icheck -- "green" --> pr["pr.open<br/>push, one pull request"]
+    icheck -- "located problems" --> fix["build.run --fix<br/>one round"]
+    fix --> icheck
+    icheck -- "round used" --> decide{{"A person decides<br/>grant-fix or abort"}}
+    pr --> merge(["A person reviews and merges"])
+```
+
 ## Install
 
 Python 3.9+, `git`, `gh` (for pull requests) and the runtimes you name (`codex`, `claude` or `omp`). No Python packages.
