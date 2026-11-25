@@ -55,15 +55,17 @@ class LimitTests(Sandbox):
         self.hold("claude", reset.isoformat())
         reply = coordinator.run(job_id, self.qk)
         self.assertEqual((reply["stopped"], reply["capability"]), ("limited", "contract.review"))
-        self.assertEqual(reply["next"], f"wait: the claude usage limit until {reset:%H:%M}, then "
-                                        f"contract.review {job_id}")
+        # Within an hour of midnight the reset falls tomorrow, and the wait names its date.
+        until = f"until {reset:%H:%M}" if reset.date() == datetime.now().astimezone().date() \
+            else f"until {reset:%Y-%m-%d %H:%M}"
+        self.assertEqual(reply["next"], f"wait: the claude usage limit {until}, then contract.review {job_id}")
         job = state.load(job_id)
         self.assertEqual(job["limits"]["claude"]["reset_at"], reset.isoformat())
         self.assertEqual(job["log"][-1]["status"], "limited")
         self.assertEqual(job["usage"][-1]["status"], "limited")
         self.assertIsNone(job["contract"]["review"])  # not a failed review: no revision round is used
         summary = cli.summary(job)
-        self.assertEqual(summary["limits"]["claude"]["until"], f"until {reset:%H:%M}")
+        self.assertEqual(summary["limits"]["claude"]["until"], until)
         logged = self.logged_runs()[-1]
         self.assertEqual((logged["stage"], logged["limited"]), ("blocked", {"runtime": "claude",
                                                                            "reset_at": reset.isoformat()}))
@@ -164,6 +166,10 @@ class LimitTests(Sandbox):
         wake = coordinator.wake_time({"claude": {"reset_at": None}})
         self.assertGreaterEqual(wake, before + coordinator.LIMIT_RETRY_GAP)
         self.assertLess(wake, datetime.now().astimezone() + coordinator.LIMIT_RETRY_GAP + timedelta(seconds=5))
+
+    def test_a_reset_on_another_day_names_its_date(self):
+        tomorrow = (datetime.now().astimezone() + timedelta(days=1)).replace(microsecond=0)
+        self.assertEqual(policy.until({"reset_at": tomorrow.isoformat()}), f"until {tomorrow:%Y-%m-%d %H:%M}")
 
     def test_until_is_the_next_such_local_time(self):
         now = datetime(2026, 11, 24, 5, 0).astimezone()
