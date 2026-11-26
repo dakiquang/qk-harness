@@ -13,7 +13,7 @@ Ba vai tách riêng: agent làm và kiểm, harness chạy git, người quyết
 
 ```mermaid
 flowchart TB
-    person(["Người"]) -- "start, approve, grant-fix, abort" --> harness
+    person(["Người"]) -- "start, approve, grant-fix, accept-contract, abort" --> harness
     subgraph harness ["qk-harness"]
         direction LR
         coord["run<br/>đi theo next"] --> caps["Tám capability<br/>kiểm, làm một bước, ghi lại"]
@@ -61,10 +61,10 @@ Chồng đường dẫn và họ model của các vai được kiểm ngay khi v
 |---|---|---|
 | `plan.write` | không gì | checkout sạch; plan chưa duyệt |
 | `contract.write [--fix]` | worktree tích hợp, chỉ trong đường dẫn hợp đồng | plan đã duyệt; `--fix` một lần sau review hợp đồng thất bại |
-| `contract.review` | không gì | có hợp đồng; reviewer khác họ |
-| `build.run TASK [--fix]` | worktree riêng của task, chỉ đường dẫn của nó | hợp đồng đã review và đã đỏ (job lớn: đã duyệt); `--fix` một lần, cộng một lần cho mỗi `grant-fix` |
+| `contract.review` | không gì | có hợp đồng; reviewer khác họ; lượt review mới xoá việc chấp nhận |
+| `build.run TASK [--fix]` | worktree riêng của task, chỉ đường dẫn của nó | hợp đồng đã qua review hoặc được chấp nhận, và đã đỏ (job lớn: đã duyệt); `--fix` một lần, cộng một lần cho mỗi `grant-fix` |
 | `build.run integration --fix` | worktree tích hợp, chỉ đường dẫn của các task | nhánh tích hợp hỏng kiểm hoặc review; một lần, cộng một lần cho mỗi `grant-fix` |
-| `verify.run TARGET [--expect-red]` | không gì; mỗi lúc chỉ một lần kiểm trên mọi job | task đã build, hoặc nhánh tích hợp |
+| `verify.run TARGET [--expect-red]` | không gì; mỗi lúc chỉ một lần kiểm trên mọi job | task đã build, hoặc nhánh tích hợp; `--expect-red`: hợp đồng đã qua review hoặc được chấp nhận |
 | `review.run TARGET` | không gì | đích đã qua kiểm; reviewer khác họ mọi người làm mà nó kiểm |
 | `integrate.run` | nhánh local `qk/<slug>` | mọi task đã build, kiểm và review; không task nào đang chạy |
 | `pr.open` | remote: push `qk/<slug>`, mở một pull request | nhánh tích hợp đã kiểm và review; cổng cuối đã duyệt; tài khoản `gh` đang dùng push được |
@@ -86,7 +86,7 @@ Các luật do code ép, không do prompt:
 
 Lượt bị dừng vì giới hạn hạn mức của runtime (qk báo bằng trường `limit` của `qk agent run`) không làm job thất bại và không tốn vòng sửa: job ghi `limits` và bước tiếp theo thành `wait: the <runtime> usage limit until HH:MM, then …`. Task dùng runtime khác vẫn chạy tiếp. `qk-harness run --until HH:MM` ngủ tới hai phút sau giờ mở lại (30 phút nếu runtime không nêu giờ), báo (macOS), thử lại rồi chạy tiếp, tối đa ba lần chờ và không quá hạn chót; `--wait-limits` chờ mà không có hạn chót, `--no-wait-limits` tắt việc chờ. Không có các cờ này, `run` dừng với `stopped: limited`, và chạy lại sau sẽ thử lại. `status` hiện các giới hạn, và bản ghi trong sổ mang `limited`, nên `qk brief` hiện `waiting for <runtime> limit until HH:MM`.
 
-`approve JOB STAGE` ghi quyết định duyệt của người. `grant-fix JOB TARGET [--reason TEXT]` cho một task (trước khi tích hợp) hoặc `integration` thêm một vòng sửa khi vòng của nó đã dùng mà vẫn fail check hoặc còn finding nghiêm trọng đều chỉ rõ file và dòng; trường hợp khác bị từ chối, và log của job giữ quyết định cùng lý do. `abort JOB --reason TEXT` dừng hẳn job và liệt kê các nhánh, worktree còn lại để bạn xem hoặc xoá.
+`approve JOB STAGE` ghi quyết định duyệt của người. `grant-fix JOB TARGET [--reason TEXT]` cho một task (trước khi tích hợp) hoặc `integration` thêm một vòng sửa khi vòng của nó đã dùng mà vẫn fail check hoặc còn finding nghiêm trọng đều chỉ rõ file và dòng; trường hợp khác bị từ chối, và log của job giữ quyết định cùng lý do. `accept-contract JOB --reason TEXT` cho job đi tiếp với hợp đồng mà review vẫn không qua sau vòng sửa duy nhất và chưa được kiểm đỏ; lý do để trống bị từ chối. Hợp đồng giữ lý do, thời điểm và các finding nghiêm trọng đã chấp nhận, log của job giữ quyết định, và một lượt `contract.review` mới xoá việc chấp nhận. Bước kiểm đỏ và, với job lớn, cổng hợp đồng vẫn áp dụng. `abort JOB --reason TEXT` dừng hẳn job và liệt kê các nhánh, worktree còn lại để bạn xem hoặc xoá.
 
 `qk-harness status` không kèm job liệt kê các job chưa hoàn tất; dùng `--line` để hiện mỗi job trên một dòng. Runtime adapter có thể đọc các dòng này bằng cách thêm `qk-harness status --line` vào `~/.config/qk/status-commands`. Các dòng trông như sau; nhiều job không chạy được gộp thành một dòng:
 
@@ -105,6 +105,7 @@ qk-harness status --line                     # mọi job chưa xong, mỗi job m
 qk-harness run JOB --until 07:00             # qua đêm: chờ hạn mức mở lại, nhưng không chờ quá 07:00
 qk-harness grant-fix JOB api --reason "các finding đáng cho thêm một lượt"
 qk-harness run JOB                           # vòng được cấp sẽ chạy: build.run JOB api --fix
+qk-harness accept-contract JOB --reason "các finding chặt hơn plan"
 qk-harness abort JOB --reason "thay bằng một plan nhỏ hơn"
 ```
 
@@ -125,7 +126,7 @@ Bản tổng hợp cũng ghi trạng thái dừng, lý do, bước tiếp theo, 
 ## Giới hạn
 
 - Agent thật đã được đo trên hai bài eval một task. Một job thật có hai task (Codex build, Claude review) đã đi tới pull request; job đó cần sửa prompt build và một vòng sửa do người cấp thêm. Cùng việc hai task đó, chạy song song và tuần tự không có hợp đồng, đều tới được `pr.open` ([số đo](measurements.md)).
-- Job Large duy nhất từng chạy đã dừng trước cổng hợp đồng. Nó qua sáu lượt review hợp đồng; lượt nào cũng nhận các điểm cũ đã sửa xong nhưng lại tìm ra một test mới "chặt hơn plan", lượt cuối do chính câu chữ hai nghĩa trong plan. Chưa có giới hạn số lần review lại sau khi người sửa hợp đồng, và người duyệt ở cổng chưa bỏ qua được finding chỉ thuộc loại "chặt hơn plan"; bản sau cần một trong hai cách. Giờ `status JOB` đã liệt kê các finding đó.
+- Job Large duy nhất từng chạy đã dừng trước cổng hợp đồng. Nó qua sáu lượt review hợp đồng; lượt nào cũng nhận các điểm cũ đã sửa xong nhưng lại tìm ra một test mới "chặt hơn plan", lượt cuối do chính câu chữ hai nghĩa trong plan. Vẫn chưa có giới hạn số lần review lại sau khi người sửa hợp đồng, nhưng khi vòng sửa đã dùng, giờ người có thể chấp nhận các finding còn lại bằng `accept-contract JOB --reason TEXT` thay vì sửa tiếp. `status JOB` liệt kê các finding đó.
 - Mỗi coordinator chạy một job; không có daemon hay hàng đợi.
 - Harness không merge, phát hành, gắn tag, xoá nhánh hay force-push, và không có capability nào làm được những việc đó.
 - Runtime: `codex`, `claude` và `omp`, theo mức qk hỗ trợ.

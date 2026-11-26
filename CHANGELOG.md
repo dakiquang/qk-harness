@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `accept-contract JOB --reason TEXT`: once the contract's revision round is used and its review still does not
+  pass, a person can accept the remaining findings and the job goes on to the red check (and, for large jobs, the
+  contract gate). The reason, time and accepted findings are kept; a new `contract.review` clears the acceptance.
+
 ## [0.1.0] - 2026-11-25
 
 First release.
