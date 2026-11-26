@@ -10,7 +10,7 @@ Việc chỉ có một task thì dùng `qk-run` của qk: rẻ và nhanh hơn. H
 
 ## Cách hoạt động
 
-Một job Medium, loại mặc định. Job Large dừng thêm để duyệt sau hợp đồng, sau build và sau tích hợp; `--no-contract` bỏ bước hợp đồng, và mỗi task có một vòng sửa riêng trước khi người quyết, giống nhánh tích hợp. [Hướng dẫn](docs/vi/guide.md) giải thích từng capability.
+Một job Medium, loại mặc định. Job Large dừng thêm để duyệt sau hợp đồng, sau build và sau tích hợp; `--no-contract` bỏ bước hợp đồng, và mỗi task có một vòng sửa riêng trước khi người quyết, giống nhánh tích hợp. Khi review hợp đồng vẫn không đạt sau lần sửa duy nhất, người sửa và commit hợp đồng rồi chạy `contract.review` lại, hoặc chấp nhận các finding còn lại bằng `qk-harness accept-contract JOB --reason TEXT`; khi đó job đi tiếp tới bước kiểm đỏ như thể review đã đạt, và một lượt `contract.review` mới xoá việc chấp nhận. [Hướng dẫn](docs/vi/guide.md) giải thích từng capability.
 
 ```mermaid
 flowchart TB
@@ -20,9 +20,10 @@ flowchart TB
     contract --> creview{"contract.review<br/>bởi model họ khác"}
     creview -- "có finding, lần đầu" --> cfix["contract.write --fix<br/>một lần sửa"]
     cfix --> creview
-    creview -- "vẫn không đạt sau lần sửa" --> cedit{{"Người sửa và commit hợp đồng,<br/>rồi contract.review lại"}}
-    cedit --> creview
+    creview -- "vẫn không đạt sau lần sửa" --> cedit{{"Người quyết<br/>sửa hợp đồng, hoặc accept-contract"}}
+    cedit -- "sửa và commit hợp đồng, rồi contract.review lại" --> creview
     creview -- "đạt" --> red{"verify.run --expect-red<br/>hợp đồng có fail trước không?"}
+    cedit -- "accept-contract JOB --reason TEXT" --> red
     red -- "đã pass sẵn" --> cabort(["Hợp đồng không chứng minh được gì<br/>người huỷ job"])
     red -- "fail" --> buildA & buildB
     subgraph tasks ["Hai task cùng lúc"]

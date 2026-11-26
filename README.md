@@ -10,7 +10,7 @@ For work with one task, use qk's own `qk-run`: it is cheaper and faster. The har
 
 ## How it works
 
-A Medium job, the default. A Large job also stops for approval after the contract, the build and the integration; `--no-contract` skips the contract stage, and each task gets one fix round of its own before a person decides, like the integrated branch. The [guide](docs/en/guide.md) explains every capability.
+A Medium job, the default. A Large job also stops for approval after the contract, the build and the integration; `--no-contract` skips the contract stage, and each task gets one fix round of its own before a person decides, like the integrated branch. When the contract review still fails after its one revision round, a person either edits and commits the contract and runs `contract.review` again, or accepts the remaining findings with `qk-harness accept-contract JOB --reason TEXT`; the job then goes on to the red check as if the review had passed, and a new `contract.review` clears the acceptance. The [guide](docs/en/guide.md) explains every capability.
 
 ```mermaid
 flowchart TB
@@ -20,9 +20,10 @@ flowchart TB
     contract --> creview{"contract.review<br/>by another model family"}
     creview -- "findings, first time" --> cfix["contract.write --fix<br/>one revision"]
     cfix --> creview
-    creview -- "still failing after the revision" --> cedit{{"A person edits and commits the contract,<br/>then contract.review again"}}
-    cedit --> creview
+    creview -- "still failing after the revision" --> cedit{{"A person decides<br/>edit the contract, or accept-contract"}}
+    cedit -- "edits and commits the contract, then contract.review again" --> creview
     creview -- "passes" --> red{"verify.run --expect-red<br/>does the contract fail first?"}
+    cedit -- "accept-contract JOB --reason TEXT" --> red
     red -- "already passes" --> cabort(["The contract proves nothing<br/>a person aborts the job"])
     red -- "fails" --> buildA & buildB
     subgraph tasks ["Two tasks at once"]
