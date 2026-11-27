@@ -14,7 +14,7 @@ REVIEW_CAPABILITIES = ("contract.review", "review.run")
 # Capability -> the qk-run stage name qk's ledger keeps usage under (other names are dropped by qk).
 STAGES = {"plan.write": "planning", "contract.write": "implementing", "contract.review": "reviewing",
           "build.run": "implementing", "verify.run": "verifying", "review.run": "reviewing",
-          "integrate.run": "publishing", "pr.open": "publishing"}
+          "integrate.run": "publishing", "pr.open": "publishing", "pr.check": "verifying"}
 
 
 def outcome(job, step, stopped=None):

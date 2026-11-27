@@ -8,6 +8,8 @@ from datetime import datetime
 import hashlib
 from pathlib import Path
 
+from harness import delegation
+
 
 CAPABILITIES = {  # name -> what it may change
     "plan.write": "nothing (read-only turn)",
@@ -18,6 +20,7 @@ CAPABILITIES = {  # name -> what it may change
     "review.run": "nothing (read-only turn)",
     "integrate.run": "the local branch qk/<slug>",
     "pr.open": "the remote: pushes qk/<slug> and opens one pull request",
+    "pr.check": "nothing; waits for CI on the delegated PR's exact head",
 }
 GATES = {"medium": ("plan",), "large": ("plan", "contract", "build", "integrate")}
 SERIOUS = ("blocker", "important")
@@ -157,10 +160,22 @@ def limit_wait(step):
     return step.startswith("wait: ") and " usage limit " in step
 
 
+def approval_step(job, stage):
+    suffix = " --delegated" if job.get("delegation") else ""
+    return f"approve {job['id']} {stage}{suffix}"
+
+
 def next_step(job):
     """The command that moves the job forward, or why a person has to act. A step whose runtime is stopped at its
     usage limit becomes a wait for the reset."""
     step = _next_step(job)
+    words = step.split()
+    spec = step_spec(job, words[0], words[2] if len(words) > 2 else None)
+    if spec and job.get("delegation"):
+        try:
+            delegation.check_turn(job, spec)
+        except delegation.GrantError as error:
+            return f"a person decides: {error}"
     hold = held(job, step)
     if hold:
         return f"wait: the {hold[0]} usage limit {until(hold[1])}, then {step}"
@@ -171,12 +186,16 @@ def _next_step(job):
     job_id = job["id"]
     if job.get("aborted"):
         return f"aborted: {job['aborted']['reason'] or 'no reason given'}"
+    try:
+        delegation.check(job)
+    except delegation.GrantError as error:
+        return f"a person decides: {error}"
     if job["plan"] is None:
         return f"plan.write {job_id}"
     if not plan_unchanged(job):
         return f"a person decides: {job['plan']['file']} changed after it was written; restore it or abort"
     if not approved(job, "plan"):
-        return f"approve {job_id} plan"
+        return approval_step(job, "plan")
     contract = job["contract"]
     if not contract_on(job):
         pass
@@ -195,7 +214,7 @@ def _next_step(job):
     elif contract["red"] is False:
         return "a person decides: the contract tests already pass before any build, so they prove nothing"
     elif not gate_open(job, "contract"):
-        return f"approve {job_id} contract"
+        return approval_step(job, "contract")
     steps = [step for step in (task_step(job, name, task) for name, task in job["tasks"].items()) if step] \
         if not job["integration"]["merged"] else []  # once integrated, only the integrated branch moves on
     if steps:
@@ -203,7 +222,7 @@ def _next_step(job):
         return next((step for step in steps if step.startswith("a person decides")), steps[0]) \
             if limit_wait(steps[0]) else steps[0]
     if not gate_open(job, "build"):
-        return f"approve {job_id} build"
+        return approval_step(job, "build")
     integration = job["integration"]
     if not integration["merged"]:
         return f"integrate.run {job_id}"
@@ -219,11 +238,17 @@ def _next_step(job):
             ("a person decides: the integrated branch has serious review findings that a fix round cannot take "
              "(no file and line, or the round is used)")
     if not gate_open(job, "integrate"):
-        return f"approve {job_id} integrate"
+        return approval_step(job, "integrate")
     if job.get("eval"):
         return "done: an eval job is graded instead of opening a pull request"
     if job["pr_url"] is None:
         return f"pr.open {job_id}"
+    if job.get("delegation"):
+        ci = job.get("ci") or {}
+        if ci.get("status") in ("failed", "blocked") or ci.get("reason"):
+            return f"a person decides: {ci.get('reason') or 'CI failed for the published head'}"
+        if ci.get("head") != job["integration"]["commit"] or ci.get("status") != "success":
+            return f"pr.check {job_id}"
     return f"done: a person reviews and merges {job['pr_url']}"
 
 
@@ -320,6 +345,15 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
     """Raise Refused unless `capability` may run now on `target` (a task name or "integration")."""
     _require(capability in CAPABILITIES, f"unknown capability {capability!r}")
     _require(not job.get("aborted"), "the job is aborted")
+    try:
+        delegation.check(job)
+        spec = step_spec(job, capability, target)
+        if spec:
+            delegation.check_turn(job, spec)
+    except delegation.GrantError as error:
+        raise Refused(str(error)) from error
+    _require(not (job.get("delegation") and job["pr_url"] and capability != "pr.check"),
+             "the delegated PR is published; no post-PR work is authorized")
     _require(not expect_red or (capability == "verify.run" and target == "integration"),
              "--expect-red only checks the contract on the integration branch before any build")
     if capability == "plan.write":
@@ -399,6 +433,9 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
     _require(not job.get("eval"), "an eval job never opens a pull request")
     _require(review_ok(integration["review"]), "the integrated branch has not passed its review")
     _require(gate_open(job, "integrate"), "the integration stage is not approved")
+    if capability == "pr.check":
+        _require(bool(job.get("delegation") and job["pr_url"]), "pr.check needs a delegated published job")
+        return
     _require(job["pr_url"] is None, f"the pull request already exists: {job['pr_url']}")
 
 

@@ -12,8 +12,8 @@ class GitError(Exception):
     """A git step failed; the message carries git's own error."""
 
 
-def git(cwd, *args, check=True):
-    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
+def git(cwd, *args, check=True, env=None):
+    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, env=env)
     if check and proc.returncode != 0:
         raise GitError(f"git {' '.join(args[:3])} failed in {cwd}: {(proc.stderr or proc.stdout).strip()[-500:]}")
     return proc.stdout.strip() if check else proc
@@ -50,8 +50,8 @@ def run_shell(command, cwd, timeout):
     return proc.returncode, (proc.stdout + proc.stderr)[-4000:]
 
 
-def gh(cwd, *args):
-    proc = subprocess.run(["gh", *args], cwd=str(cwd), capture_output=True, text=True)
+def gh(cwd, *args, env=None):
+    proc = subprocess.run(["gh", *args], cwd=str(cwd), capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         raise GitError(f"gh {' '.join(args[:2])} failed: {(proc.stderr or proc.stdout).strip()[-500:]}")
     return proc.stdout.strip()

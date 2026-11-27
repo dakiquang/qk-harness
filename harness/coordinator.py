@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 import time
 
-from harness import capabilities, gitops, ledger, policy, state
+from harness import capabilities, delegation, gitops, ledger, policy, state
 
 
 MAX_STEPS = 60  # a job with many tasks and one fix round each stays far below this
@@ -41,6 +41,23 @@ def run(job_id, qk, max_steps=MAX_STEPS, *, wait_limits=False, deadline=None):
     Running a job retries the runtimes a usage limit stopped. With `wait_limits`, a job stopped by a usage limit
     sleeps until the reset (plus a grace period) and carries on, at most LIMIT_WAITS times and never past
     `deadline` (a local datetime)."""
+    with state.locked(job_id) as job:
+        if job.get("delegation"):
+            try:
+                delegation.check(job)
+                if delegation.interrupted(job):
+                    raise delegation.GrantError("a model turn has unresolved cost or may still be running; inspect it")
+            except delegation.GrantError as error:
+                capabilities.record(job, "resume", "blocked", str(error))
+                reply = {"status": "blocked", "stopped": "blocked", "reason": str(error)}
+            else:
+                reply = None
+                if job["pr_url"]:
+                    job["ci"] = None  # an explicit resume rechecks the remote head and CI, not cached success
+        else:
+            reply = None
+    if reply:
+        return finish(job_id, qk, reply)
     cleared = ledger.recover(job_id)
     release(job_id)
     reply = loop(job_id, qk, max_steps)
@@ -110,7 +127,15 @@ def deadline_at(clock, now=None):
 def finish(job_id, qk, reply):
     logged = ledger.record(job_id, qk, reply.get("next") or policy.next_step(state.load(job_id)),
                            stopped=reply.get("stopped"))
-    return dict(reply, ledger=logged) if logged else reply
+    result = dict(reply, ledger=logged) if logged else reply
+    job = state.load(job_id)
+    if job.get("delegation"):
+        targets = [("contract", job.get("contract")), *job["tasks"].items(), ("integration", job["integration"])]
+        findings = [{"target": name, **finding} for name, target in targets if target
+                    for finding in (target.get("review") or {}).get("findings", [])]
+        result = dict(result, authority=job["delegation"]["sha256"], approvals=job["approvals"],
+                      budget=delegation.costs(job), ci=job.get("ci"), findings=findings)
+    return result
 
 
 def loop(job_id, qk, max_steps):
@@ -130,6 +155,11 @@ def loop(job_id, qk, max_steps):
         step = batch[0] if batch else policy.next_step(job)  # one task can move while another waits
         parsed = parse_step(step)
         if parsed is None:
+            if step.startswith("approve ") and step.endswith(" --delegated"):
+                reply = capabilities.approve(job_id, step.split()[2], delegated=True)
+                if reply["status"] != "done":
+                    return dict(reply, stopped=reply["status"])
+                continue
             stopped = "done" if step.startswith("done") else "aborted" if step.startswith("aborted") else \
                 "limited" if policy.limit_wait(step) else "waiting"
             return dict(reply, stopped=stopped, next=step)

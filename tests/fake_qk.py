@@ -11,6 +11,7 @@ the commit id. Behaviour comes from environment variables:
 - FAKE_QK_LIMIT: a file; while it exists, its JSON `{"runtime", "reset_at"}` makes agent run with that runtime
   stop at its usage limit (blocked, with `limit` set as qk reports it); `"partial": true` first writes a file in
   --cwd of a write turn, as an agent stopped mid-turn would
+- FAKE_QK_COST_USD: reported USD of each non-Codex turn; absent means the runtime supplies no USD
 """
 
 from pathlib import Path
@@ -50,6 +51,9 @@ if command == "agent run":
         fail()
     status = "done" if scenario == "done" else "blocked"
     spec = argv[argv.index("--spec") + 1]
+    usage = {"input": 1, "cached": 0, "output": 1}
+    if "FAKE_QK_COST_USD" in os.environ and not spec.startswith("codex:"):
+        usage["cost_usd"] = float(os.environ["FAKE_QK_COST_USD"])
     held = Path(os.environ.get("FAKE_QK_LIMIT") or "/nonexistent")
     if held.is_file():
         limit = json.loads(held.read_text())
@@ -73,13 +77,13 @@ if command == "agent run":
         status = result["status"] if result else "blocked"
         reply({"contract": 1, "status": status, "reason": "" if status == "done" else (proc.stderr or "no block"),
                "family": "openai" if spec.startswith("codex") else "anthropic", "spec": spec, "result": result,
-               "text": text, "usage": {"input": 1, "cached": 0, "output": 1}, "lessons": [], "events": None,
+               "text": text, "usage": usage, "lessons": [], "events": None,
                "seconds": 0}, 0 if status == "done" else 2)
     reply({"contract": 1, "status": status, "reason": "" if status == "done" else "fake reason",
            "family": "openai" if spec.startswith("codex") else "anthropic", "spec": spec,
            "result": {"status": status, "summary": "fake", "files": [], "evidence": [], "reason": "",
                       "findings": []} if status == "done" else None,
-           "text": "fake reply", "usage": {"input": 1, "cached": 0, "output": 1}, "lessons": [], "events": None,
+           "text": "fake reply", "usage": usage, "lessons": [], "events": None,
            "seconds": 0}, 0 if status == "done" else 2)
 if command == "agent family":
     reply({"contract": 1, "spec": argv[2], "family": "openai" if argv[2].startswith("codex") else "anthropic"})
