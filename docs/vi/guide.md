@@ -60,13 +60,17 @@ qk-harness run JOB --until 07:00
 
 Thay `JOB`, paths, login và số USD minh họa bằng phạm vi/model/dự toán đã xét. `authorize` chính là cấp quyền, không phải xem trước. Quyền gắn với task, repo, base commit, model/options, branch job và origin; đường dẫn contract/task của plan phải nằm trong paths đã cấp. Checkout lập plan phải đúng base. Model riêng của task ngoài cặp đã cấp bị từ chối. Grant không phải OS sandbox hay allowlist lệnh shell; lệnh plan/check vẫn là code được tin cậy, và review contract kiểm cả plan so với task gốc.
 
+`authorize` kiểm token GitHub, tài khoản và quyền repo trước khi lưu grant để publisher sai bị chặn trước khi tốn tiền model. Preflight hỏng giữ nguyên grant cũ. Lúc publish vẫn kiểm lại vì credential hoặc quyền có thể đã đổi.
+
 Chạy lệnh cuối trong Terminal/process độc lập với chat. CLI không cần phiên agent duyệt tiếp từng cổng. Runner thực hiện `approve JOB STAGE --delegated`, ghi `actor=delegated` và hash grant của người, không giả thêm chữ ký người. State và usage giữ qua resume; lệnh không cài daemon hoặc sống qua việc đóng chính Terminal/tắt máy.
 
 Ngân sách là **soft stop cho USD runtime báo**, không phải trần cứng: trước lượt mới, runner xét USD đã tiêu cộng khoản dự trù của các lượt song song và lượt non-Codex kế tiếp. Lượt đã khởi chạy có thể vượt dự toán/ngân sách. Codex thiếu USD vẫn là unknown và giả định quota hiện có đã được duyệt, không phải mua API; người cấp quyền phải kiểm kiểu thanh toán đó. Non-Codex thiếu USD thì dừng lượt sau. Usage pending được lưu trước khi gọi; model turn bị ngắt chưa biết cost làm resume dừng để kiểm, không tự tính miễn phí rồi chạy lại. Chưa có cơ chế tự đối soát hoặc xóa các record chưa rõ đó.
 
-`status JOB` và kết quả cuối có authority, budget (known/unknown/reserved) và CI. Muốn tăng ngân sách hoặc đổi scope phải cấp `authorize` mới một cách rõ ràng; usage cũ và lịch sử grant được giữ. `revoke JOB --reason TEXT` chặn việc tiếp theo khi lấy được state lock, không hủy lượt đang chạy. Job bị đổi, plan/origin khác hoặc quyền bị thu hồi thì delegation dừng.
+`status JOB` và kết quả cuối có authority, budget (known/unknown/reserved) và CI. Muốn tăng ngân sách hoặc đổi scope phải cấp `authorize` mới một cách rõ ràng; usage cũ và lịch sử grant được giữ. `revoke JOB --reason TEXT` chặn việc tiếp theo khi lấy được state lock, không hủy lượt đang chạy. Chờ CI giữ lock tối đa 30 phút nên revoke/abort có thể phải đợi. Job đã thu hồi cần `authorize` mới hoặc `abort`; không tự chuyển ngầm sang manual. Job bị đổi, plan/origin khác hoặc quyền bị thu hồi thì delegation dừng.
 
-Publish chỉ lấy credential của `--gh-user` cho tiến trình Git/gh, không đổi auth/config lưu trên máy. Nó kiểm tài khoản, repo và head đã review, chỉ push branch job; body PR là tóm tắt evidence, không chép plan riêng tư. Sau publish, `pr.check` chờ tối đa 30 phút cho đúng head: checks vắng/pending/toàn skipped không phải xanh; CI hỏng hoặc head/base/state đổi làm job bị chặn. `run` mới kiểm CI lại, không build hoặc tạo PR trùng. CI đỏ không cấp thêm vòng sửa hậu PR. Merge vẫn do người.
+Publish chỉ lấy credential của `--gh-user` cho tiến trình Git/gh, không đổi auth/config lưu trên máy. Nó kiểm tài khoản, repo và head đã review, chỉ push branch job; body PR là tóm tắt evidence, không chép plan riêng tư. Sau publish, `pr.check` chờ tối đa 30 phút cho đúng head: checks vắng/pending/toàn skipped hoặc GitHub Actions run chưa xong không phải xanh; CI hỏng hoặc head/base/state đổi làm job bị chặn. `run` mới kiểm CI lại, không build hoặc tạo PR trùng. CI đỏ không cấp thêm vòng sửa hậu PR. Merge vẫn do người.
+
+CI chỉ thấy checks và Actions runs GitHub đã đăng ký cho head này, không biết workflow/check chưa đăng ký; không đặt thêm allowlist workflow bắt buộc. Token được chọn phải có cả quyền đọc Actions runs của repo.
 
 
 ## Plan

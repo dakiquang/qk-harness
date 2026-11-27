@@ -100,8 +100,15 @@ def check_ci(job):
             raise delegation.GrantError(job["ci"]["reason"])
         if checks and any(item["result"] == "SUCCESS" for item in checks) and \
                 all(item["result"] in ("SUCCESS", "SKIPPED", "NEUTRAL") for item in checks):
-            job["ci"]["status"] = "success"
-            return {"pr_url": job["pr_url"], "head": integration["commit"], "ci": job["ci"]}
+            reported = gitops.gh(
+                integration["worktree"], "api",
+                f"repos/{grant['github_repo']}/actions/runs?head_sha={integration['commit']}&per_page=100",
+                "--paginate", "--jq", ".workflow_runs[] | {id, status} | @json", env=env)
+            workflows = [json.loads(line) for line in reported.splitlines()]
+            job["ci"]["workflows"] = workflows
+            if all(run.get("status") == "completed" for run in workflows):
+                job["ci"]["status"] = "success"
+                return {"pr_url": job["pr_url"], "head": integration["commit"], "ci": job["ci"]}
         if time.monotonic() >= deadline:
             job["ci"].update(status="pending", reason="CI is absent or still pending at the wait deadline; run again to check it")
             raise delegation.GrantError(job["ci"]["reason"])

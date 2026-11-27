@@ -31,6 +31,9 @@ if command == 'auth token':
     print('fixture-publish-token')
 elif command == 'api user':
     print(os.environ.get('FAKE_GH_LOGIN', 'publisher'))
+elif args[:1] == ['api'] and '/actions/runs?' in args[1]:
+    for index, status in enumerate(filter(None, os.environ.get('FAKE_GH_WORKFLOWS', 'completed').split(','))):
+        print(json.dumps({'id': index + 1, 'status': status}))
 elif command == 'repo view':
     print(json.dumps({'nameWithOwner': 'example/project', 'viewerPermission': 'WRITE'}))
 elif command == 'pr list':
@@ -43,6 +46,8 @@ elif command == 'pr view':
     job = json.loads(jobs[-1].read_text())
     result = os.environ.get('FAKE_GH_CI', 'SUCCESS')
     checks = [] if result == 'NONE' else [{'name': 'test', 'status': 'COMPLETED', 'conclusion': result}]
+    if result == 'LEGACY':
+        checks = [{'context': 'legacy-test', 'state': 'SUCCESS'}]
     print(json.dumps({'state': 'OPEN', 'baseRefName': job['base'], 'headRefName': job['integration']['branch'],
                       'headRefOid': os.environ.get('FAKE_GH_HEAD', job['integration']['commit']),
                       'statusCheckRollup': checks}))
@@ -237,6 +242,42 @@ os.execv(REAL_GIT, [REAL_GIT, *args])
         self.assertEqual(reply["stopped"], "done", reply)
         self.assertEqual(len(state.load(job_id)["usage"]), turns)
         self.assertEqual(sum(line.startswith("pr create ") for line in self.gh_log.read_text().splitlines()), 1)
+
+    def test_pending_workflow_cannot_complete_from_partial_successful_rollup(self):
+        job_id = self.new("large")
+        self.grant(job_id)
+        with mock.patch.dict(os.environ, FAKE_GH_WORKFLOWS="completed,in_progress"), \
+                mock.patch.object(publication, "CI_TIMEOUT", 0):
+            reply = coordinator.run(job_id, self.qk)
+        self.assertEqual(reply["stopped"], "blocked", reply)
+        self.assertEqual(reply["ci"]["status"], "pending")
+        turns = len(state.load(job_id)["usage"])
+        completed = coordinator.run(job_id, self.qk)
+        self.assertEqual(completed["stopped"], "done", completed)
+        self.assertEqual(len(state.load(job_id)["usage"]), turns)
+
+    def test_legacy_status_without_action_workflows_can_complete(self):
+        job_id = self.new("large")
+        self.grant(job_id)
+        with mock.patch.dict(os.environ, FAKE_GH_WORKFLOWS="", FAKE_GH_CI="LEGACY"):
+            reply = coordinator.run(job_id, self.qk)
+        self.assertEqual((reply["stopped"], reply["ci"]["status"]), ("done", "success"), reply)
+
+    def test_publisher_preflight_failure_does_not_create_or_replace_authority(self):
+        job_id = self.new("large")
+        with mock.patch.dict(os.environ, FAKE_GH_LOGIN="other-user"):
+            result = self.invoke("authorize", job_id, "--path", "src", "--path", "tests", "--budget-usd", "2",
+                                 "--turn-estimate-usd", "0.1", "--gh-user", "publisher")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertNotIn("delegation", state.load(job_id))
+        original = self.grant(job_id)
+        with mock.patch.dict(os.environ, FAKE_GH_LOGIN="other-user"), \
+                self.assertRaisesRegex(delegation.GrantError, "different GitHub account"):
+            self.grant(job_id, budget=3)
+        job = state.load(job_id)
+        self.assertEqual(job["delegation"]["sha256"], original["authority"])
+        self.assertEqual(len(job["delegation_history"]), 1)
+        self.assertEqual(job.get("usage", []), [])
 
     def test_invalid_budget_and_root_scope_do_not_create_authority(self):
         job_id = self.new("large")

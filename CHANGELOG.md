@@ -17,14 +17,16 @@ All notable changes to this project are documented here. The format follows
   pass, a person can accept the remaining findings and the job goes on to the red check (and, for large jobs, the
   contract gate). The reason, time and accepted findings are kept; a new `contract.review` clears the acceptance.
 - Opt-in `authorize JOB --path ... --budget-usd ... --turn-estimate-usd ... --gh-user ...` and `revoke JOB`:
-  one durable user grant for a job's scope/models, soft spending checks and PR publication. Stage records
-  distinguish delegated actions from human approvals; manual gates remain the default.
+  one durable user grant for a job's scope/models, soft spending checks and PR publication, with a read-only
+  publisher preflight before the grant is saved. Stage records distinguish delegated actions from human
+  approvals; manual gates remain the default.
 - Delegated model turns persist pending usage before invocation, count reported failed-turn costs, reserve
   concurrent estimates, and stop on unresolved interrupted costs or missing non-Codex USD instead of treating
   them as free. Resuming never resets spend; this is not a hard budget cap.
 - Delegated publication scopes Git/gh credentials to the approved account/repository/branch, projects a concise
-  evidence body, and checks CI for the exact reviewed head with `pr.check`. CI failures/pending/head drift do not
-  report completion or grant a post-PR fix loop. The runner needs no live chat to advance stages and never merges.
+  evidence body, and checks reported CI and registered GitHub Actions runs for the exact reviewed head with
+  `pr.check`. CI failures/pending/head drift do not report completion or grant a post-PR fix loop. The runner
+  needs no live chat to advance stages and never merges.
 
 ## [0.1.0] - 2026-11-25
 

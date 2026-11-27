@@ -87,7 +87,9 @@ def authorize(job_id, paths, budget_usd, turn_estimate_usd, gh_user):
         previous = job.get("delegation")
         job["delegation"] = grant
         try:
+            from harness import publication
             check(job)
+            publication.environment(job)
         except Exception:
             if previous is None:
                 job.pop("delegation", None)
