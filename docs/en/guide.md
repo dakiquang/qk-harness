@@ -6,17 +6,17 @@
 
 The durable part of an agent harness is its commitments: who may do what, what must be true before each step, and what evidence each step leaves. The order of steps is the part that ages fastest. So qk-harness is two layers:
 
-- **Eight capabilities**, each one command that checks its own preconditions from the job state, does one step, records it, and replies with `status`, `reason` and `next`.
+- **Capabilities**, each one command that checks its own preconditions from the job state, does one step, records it, and replies with `status`, `reason` and `next`.
 - **A thin coordinator** (`run`) that only follows `next`. Calling a capability by hand gets exactly the same checks and refusals.
 
-Three roles stay separate: agents make and check, the harness runs git, and a person decides at the gates and merges.
+Three roles stay separate: agents make and check, the harness runs git, and a person approves stages or explicitly delegates one job, and alone decides to merge.
 
 ```mermaid
 flowchart TB
     person(["Person"]) -- "start, approve, grant-fix, accept-contract, abort" --> harness
     subgraph harness ["qk-harness"]
         direction LR
-        coord["run<br/>follows next"] --> caps["Eight capabilities<br/>check, do one step, record"]
+        coord["run<br/>follows next"] --> caps["Capabilities<br/>check, do one step, record"]
         caps <--> state[("Job state<br/>state.json, worktrees")]
     end
     harness -- "agent turns, stopped jobs" --> qk
@@ -46,6 +46,29 @@ flowchart TB
 
 Job state lives in `$QK_HARNESS_STATE_DIR`, else `$XDG_STATE_HOME/qk-harness`, else `~/.local/state/qk-harness`: one directory per job with `state.json`, the plan, diffs, the agent turns and every worktree. Nothing is written into your repository except the branches `qk/<slug>` and `qk/<slug>--<task>`, their worktrees' registration, and the upstream of `qk/<slug>` once `pr.open` pushes it.
 
+## Delegating one job
+
+Manual gates remain the default. Before planning, a person may authorize one job to continue through its gates and publish a PR. This retains the contract, per-task reviews, cross-family checks and normal fix rounds; it never authorizes merge, release, extra fix rounds or extra PR audits.
+
+```bash
+qk-harness start --repo ~/src/project --task "Add CSV export" --size large \
+  --impl codex:gpt-6.1-terra --review claude:sonnet
+qk-harness authorize JOB --path src --path tests --path README.md --path CHANGELOG.md \
+  --budget-usd 5 --turn-estimate-usd 0.5 --gh-user your-login
+qk-harness run JOB --until 07:00
+```
+
+Replace `JOB`, the paths, login and illustrative USD amounts with the reviewed scope/model estimates. `authorize` is the user granting authority, not a preview. It binds the task, repo, base commit, models/options, job branch and origin; all planned contract/task paths must fit the supplied paths. The planning checkout must match the base. Task-specific model overrides outside the approved pair are refused. A grant is not an OS sandbox or a shell-command allowlist; plan/check commands are still trusted code, and contract review also checks the plan against the original task.
+
+Run the last command in a Terminal/process independent of the chat session. The CLI needs no agent session to approve its stages. `approve JOB STAGE --delegated` is the actual transition recorded by the runner: `actor=delegated` plus the user grant hash, not another human signature. State and usage survive resume; the command does not install a daemon or survive shutting down its own Terminal/machine.
+
+The budget is a **soft stop for reported USD**, not a hard cap: before a new turn the runner checks spent USD plus concurrent reservations and the next non-Codex turn estimate. In-flight turns may exceed the estimate/budget. Missing Codex USD remains unknown and assumes the existing quota is authorized, not API purchases; the caller must verify that billing setup. Missing non-Codex USD stops further turns. Pending usage is saved before invocation; a killed model turn with unresolved cost stops resume for inspection instead of being retried as free work. No automatic reconciliation or clearing of those unresolved records is claimed.
+
+`status JOB` and the final reply include authority, budget (known/unknown/reserved) and CI. Raise the budget or change scope only with a new explicit `authorize` command; it keeps prior usage and grant history. `revoke JOB --reason TEXT` prevents further work once the state lock is available; it does not cancel an in-flight turn. Job mutation, changed plan/origin or revocation stops delegation.
+
+Publishing obtains credentials for `--gh-user` only in Git/gh children, without changing stored auth/config. It checks account, repository and reviewed head, publishes only the job branch, and uses an evidence summary rather than the private plan as PR body. After publication, `pr.check` waits up to 30 minutes for the PR's exact head: absent/pending/all-skipped checks are not success; failure or head/base/state drift blocks the job. A new `run` rechecks CI without rebuilding or duplicating the PR. CI red does not authorize a post-PR fix loop. Merge remains the person's decision.
+
+
 ## The plan
 
 `plan.write` asks the implementer to follow qk's `qk-plan` skill read-only and return a plan with two blocks:
@@ -68,11 +91,12 @@ Ownership overlaps and role families are checked when the plan is written, befor
 | `review.run TARGET` | nothing | target passed its checks; reviewer from another family than every implementer it checks |
 | `integrate.run` | the local branch `qk/<slug>` | every task built, checked and reviewed; nothing running |
 | `pr.open` | the remote: pushes `qk/<slug>`, opens one pull request | integrated branch checked and reviewed; last gate approved; the active `gh` account can push |
+| `pr.check` | nothing | delegated published job; waits for reported CI on the exact reviewed head before `done` |
 
 Rules the code enforces, not the prompt:
 
-- Workers never run git. A worker that commits, switches branch, or changes a path it does not own is refused and its changes are not committed.
-- Agents see only their own worktree and a shared directory holding the plan and diffs, never another worktree.
+- Only the harness may commit or switch branches. Changed branch/commit and out-of-ownership paths are refused after a worker turn; this is not a ban on every read-only Git command or an OS sandbox.
+- Agents are given their own worktree and the shared plan/diff directory, not other task worktrees; this describes supplied context, not filesystem isolation against arbitrary shell commands.
 - The contract must fail before any build (`--expect-red`); a contract that already passes stops the job.
 - Integration merges exactly the commits that were checked and reviewed; a branch that moved since stops the job.
 - A fix round takes only failed checks and findings that name a file and a line. Anything else waits for a person.
@@ -126,7 +150,7 @@ The summary also includes each run's stop state, reason, next step, pass result 
 ## Limits
 
 - Real agents have been measured on two single-task eval cases. One real two-task job (Codex building, Claude reviewing) reached its pull request; it needed a fix to the build prompt and one fix round granted by a person. The same two-task work, run parallel and sequential without a contract, reached `pr.open` both times ([measurements](measurements.md)).
-- The one Large job tried stopped before the contract gate. It went through six contract reviews; each one accepted the earlier points as fixed and found a new test that was stricter than the plan, the last coming from an ambiguous sentence in the plan itself. There is still no cap on reviews after a person edits the contract, but once the revision round is used a person can now accept the remaining findings with `accept-contract JOB --reason TEXT` instead of editing again. `status JOB` lists those findings.
+- An earlier Large job stopped before the contract gate after six contract reviews, each finding a new test stricter than the plan. A later manual Large job reached [WAF PR #11](https://github.com/dakiquang/waf-upgrade-check/pull/11) through four human gates, but had only one completion task. Neither is a real-agent delegated-job or multi-task proof. After the revision round a person can accept remaining contract findings with `accept-contract JOB --reason TEXT`; delegation never grants that decision automatically.
 - One job runs at a time per coordinator; there is no daemon or queue.
 - The harness does not merge, release, tag, delete branches or force-push, and has no capability that could.
 - Runtimes: `codex`, `claude` and `omp`, as qk supports them.

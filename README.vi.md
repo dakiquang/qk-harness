@@ -71,6 +71,11 @@ Qua đêm, `qk-harness run JOB --until 07:00` chờ hạn mức mở lại thay 
 
 `run` dừng ở mỗi cổng, ở bước bị chặn, và khi cần người quyết; `status` và mọi câu trả lời đều nêu bước tiếp theo. [Hướng dẫn](docs/vi/guide.md) giải thích từng capability, các cổng, tuỳ chọn và giới hạn.
 
+### Một lần cấp quyền ban đầu
+
+Với job tự chạy, `authorize JOB --path ... --budget-usd ... --turn-estimate-usd ... --gh-user ...` cấp rõ scope, soft budget và quyền mở PR của đúng job. Chạy `run JOB` trong Terminal độc lập; runner đi tiếp các cổng dưới actor `delegated`, giữ mọi kiểm tra kỹ thuật và chờ CI của head đã publish. Manual vẫn mặc định; merge luôn do người. Xem [ủy quyền một job](docs/vi/guide.md#ủy-quyền-một-job) để biết lệnh đầy đủ, resume/revoke, unknown cost và giới hạn. Đây không phải hard cap hay OS sandbox.
+
+
 ## Trạng thái
 
 Phiên bản 0.1.0. Đã build và test với một qk giả; đã đo với agent thật trên hai bài eval một task của qk ([số đo](docs/vi/measurements.md)). Một job thật có hai task đã đi tới pull request, với một vòng sửa do người cấp thêm.

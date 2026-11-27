@@ -71,6 +71,11 @@ Overnight, `qk-harness run JOB --until 07:00` waits out a usage limit instead of
 
 `run` stops at every gate, at any step that is blocked, and when a person must decide; `status` and every reply name the next step. The [guide](docs/en/guide.md) explains each capability, the gates, the options and the limits.
 
+### One upfront authorization
+
+For an unattended job, `authorize JOB --path ... --budget-usd ... --turn-estimate-usd ... --gh-user ...` explicitly grants scope, a soft budget and publication of that job's PR. Run `run JOB` in an independent Terminal; it advances stages as `delegated`, retains every technical check, and waits for CI on the published head. Manual stays the default; merge always belongs to a person. See [delegating one job](docs/en/guide.md#delegating-one-job) for the complete command, resume/revoke behavior, unknown costs and limits. This is not a hard cap or an OS sandbox.
+
+
 ## Status
 
 Version 0.1.0. Built and tested against a stand-in qk; measured with real agents on two of qk's single-task eval cases ([measurements](docs/en/measurements.md)). One real job with two tasks has reached its pull request, with a person granting one extra fix round.

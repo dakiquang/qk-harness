@@ -6,17 +6,17 @@
 
 Phần bền của một agent harness là các cam kết: ai được làm gì, điều gì phải đúng trước mỗi bước, và mỗi bước để lại bằng chứng gì. Thứ tự các bước là phần lỗi thời nhanh nhất. Vì vậy qk-harness có hai lớp:
 
-- **Tám capability**, mỗi cái là một lệnh tự kiểm điều kiện tiên quyết từ trạng thái job, làm một bước, ghi lại, và trả `status`, `reason`, `next`.
+- **Các capability**, mỗi cái là một lệnh tự kiểm điều kiện tiên quyết từ trạng thái job, làm một bước, ghi lại, và trả `status`, `reason`, `next`.
 - **Một coordinator mỏng** (`run`) chỉ đi theo `next`. Gọi tay một capability cũng bị kiểm và từ chối y như vậy.
 
-Ba vai tách riêng: agent làm và kiểm, harness chạy git, người quyết ở các cổng và merge.
+Ba vai tách riêng: agent làm và kiểm, harness chạy git, người duyệt từng cổng hoặc cấp quyền cho đúng một job; merge luôn do người quyết.
 
 ```mermaid
 flowchart TB
     person(["Người"]) -- "start, approve, grant-fix, accept-contract, abort" --> harness
     subgraph harness ["qk-harness"]
         direction LR
-        coord["run<br/>đi theo next"] --> caps["Tám capability<br/>kiểm, làm một bước, ghi lại"]
+        coord["run<br/>đi theo next"] --> caps["Các capability<br/>kiểm, làm một bước, ghi lại"]
         caps <--> state[("Trạng thái job<br/>state.json, worktree")]
     end
     harness -- "lượt agent, job đã dừng" --> qk
@@ -46,6 +46,29 @@ flowchart TB
 
 Trạng thái job nằm ở `$QK_HARNESS_STATE_DIR`, không có thì `$XDG_STATE_HOME/qk-harness`, không có nữa thì `~/.local/state/qk-harness`: mỗi job một thư mục có `state.json`, plan, diff, các lượt agent và mọi worktree. Harness không ghi gì vào repo của bạn ngoài các nhánh `qk/<slug>`, `qk/<slug>--<task>`, việc đăng ký worktree của chúng, và upstream của `qk/<slug>` khi `pr.open` push nó.
 
+## Ủy quyền một job
+
+Manual vẫn là mặc định. Trước khi lập plan, người có thể cấp quyền cho đúng một job tự đi qua các cổng và mở PR. Hợp đồng, review từng task, khác họ model và vòng sửa mặc định giữ nguyên; không cấp quyền merge, release, thêm vòng sửa hay thêm PR audit.
+
+```bash
+qk-harness start --repo ~/src/project --task "Thêm xuất CSV" --size large \
+  --impl codex:gpt-6.1-terra --review claude:sonnet
+qk-harness authorize JOB --path src --path tests --path README.md --path CHANGELOG.md \
+  --budget-usd 5 --turn-estimate-usd 0.5 --gh-user your-login
+qk-harness run JOB --until 07:00
+```
+
+Thay `JOB`, paths, login và số USD minh họa bằng phạm vi/model/dự toán đã xét. `authorize` chính là cấp quyền, không phải xem trước. Quyền gắn với task, repo, base commit, model/options, branch job và origin; đường dẫn contract/task của plan phải nằm trong paths đã cấp. Checkout lập plan phải đúng base. Model riêng của task ngoài cặp đã cấp bị từ chối. Grant không phải OS sandbox hay allowlist lệnh shell; lệnh plan/check vẫn là code được tin cậy, và review contract kiểm cả plan so với task gốc.
+
+Chạy lệnh cuối trong Terminal/process độc lập với chat. CLI không cần phiên agent duyệt tiếp từng cổng. Runner thực hiện `approve JOB STAGE --delegated`, ghi `actor=delegated` và hash grant của người, không giả thêm chữ ký người. State và usage giữ qua resume; lệnh không cài daemon hoặc sống qua việc đóng chính Terminal/tắt máy.
+
+Ngân sách là **soft stop cho USD runtime báo**, không phải trần cứng: trước lượt mới, runner xét USD đã tiêu cộng khoản dự trù của các lượt song song và lượt non-Codex kế tiếp. Lượt đã khởi chạy có thể vượt dự toán/ngân sách. Codex thiếu USD vẫn là unknown và giả định quota hiện có đã được duyệt, không phải mua API; người cấp quyền phải kiểm kiểu thanh toán đó. Non-Codex thiếu USD thì dừng lượt sau. Usage pending được lưu trước khi gọi; model turn bị ngắt chưa biết cost làm resume dừng để kiểm, không tự tính miễn phí rồi chạy lại. Chưa có cơ chế tự đối soát hoặc xóa các record chưa rõ đó.
+
+`status JOB` và kết quả cuối có authority, budget (known/unknown/reserved) và CI. Muốn tăng ngân sách hoặc đổi scope phải cấp `authorize` mới một cách rõ ràng; usage cũ và lịch sử grant được giữ. `revoke JOB --reason TEXT` chặn việc tiếp theo khi lấy được state lock, không hủy lượt đang chạy. Job bị đổi, plan/origin khác hoặc quyền bị thu hồi thì delegation dừng.
+
+Publish chỉ lấy credential của `--gh-user` cho tiến trình Git/gh, không đổi auth/config lưu trên máy. Nó kiểm tài khoản, repo và head đã review, chỉ push branch job; body PR là tóm tắt evidence, không chép plan riêng tư. Sau publish, `pr.check` chờ tối đa 30 phút cho đúng head: checks vắng/pending/toàn skipped không phải xanh; CI hỏng hoặc head/base/state đổi làm job bị chặn. `run` mới kiểm CI lại, không build hoặc tạo PR trùng. CI đỏ không cấp thêm vòng sửa hậu PR. Merge vẫn do người.
+
+
 ## Plan
 
 `plan.write` yêu cầu bên làm theo skill `qk-plan` của qk ở chế độ chỉ đọc và trả về plan có hai khối:
@@ -68,11 +91,12 @@ Chồng đường dẫn và họ model của các vai được kiểm ngay khi v
 | `review.run TARGET` | không gì | đích đã qua kiểm; reviewer khác họ mọi người làm mà nó kiểm |
 | `integrate.run` | nhánh local `qk/<slug>` | mọi task đã build, kiểm và review; không task nào đang chạy |
 | `pr.open` | remote: push `qk/<slug>`, mở một pull request | nhánh tích hợp đã kiểm và review; cổng cuối đã duyệt; tài khoản `gh` đang dùng push được |
+| `pr.check` | không gì | job delegated đã mở PR; chờ CI được báo cho đúng head đã review trước khi `done` |
 
 Các luật do code ép, không do prompt:
 
-- Worker không bao giờ chạy git. Worker tự commit, đổi nhánh hay sửa đường dẫn không thuộc mình thì bị từ chối và thay đổi không được commit.
-- Agent chỉ thấy worktree của mình và một thư mục chung chứa plan và diff, không bao giờ thấy worktree khác.
+- Chỉ harness được commit/đổi nhánh. Sau lượt worker, code từ chối branch/commit bị đổi hoặc paths ngoài ownership; đây không phải cấm cưỡng chế mọi lệnh Git chỉ đọc hay OS sandbox.
+- Agent được cấp worktree của nó và thư mục chung plan/diff, không cấp worktree task khác; đây là context được truyền, không phải cách ly filesystem trước mọi lệnh shell.
 - Hợp đồng phải đỏ trước mọi build (`--expect-red`); hợp đồng đã xanh sẵn thì job dừng.
 - Tích hợp gộp đúng các commit đã kiểm và review; nhánh bị đổi sau đó thì job dừng.
 - Vòng sửa chỉ nhận lần kiểm hỏng và finding có file và dòng. Còn lại chờ người.
@@ -126,7 +150,7 @@ Bản tổng hợp cũng ghi trạng thái dừng, lý do, bước tiếp theo, 
 ## Giới hạn
 
 - Agent thật đã được đo trên hai bài eval một task. Một job thật có hai task (Codex build, Claude review) đã đi tới pull request; job đó cần sửa prompt build và một vòng sửa do người cấp thêm. Cùng việc hai task đó, chạy song song và tuần tự không có hợp đồng, đều tới được `pr.open` ([số đo](measurements.md)).
-- Job Large duy nhất từng chạy đã dừng trước cổng hợp đồng. Nó qua sáu lượt review hợp đồng; lượt nào cũng nhận các điểm cũ đã sửa xong nhưng lại tìm ra một test mới "chặt hơn plan", lượt cuối do chính câu chữ hai nghĩa trong plan. Vẫn chưa có giới hạn số lần review lại sau khi người sửa hợp đồng, nhưng khi vòng sửa đã dùng, giờ người có thể chấp nhận các finding còn lại bằng `accept-contract JOB --reason TEXT` thay vì sửa tiếp. `status JOB` liệt kê các finding đó.
+- Một Large trước đây dừng trước cổng contract sau sáu review, mỗi lượt lại thấy một test chặt hơn plan. Sau đó manual Large đã tới [WAF PR #11](https://github.com/dakiquang/waf-upgrade-check/pull/11) qua bốn cổng người duyệt, nhưng chỉ một completion task. Chưa lượt nào là proof delegated job với model thật hoặc proof nhiều task. Sau vòng sửa contract, người có thể chấp nhận finding bằng `accept-contract JOB --reason TEXT`; delegation không tự cấp quyết định đó.
 - Mỗi coordinator chạy một job; không có daemon hay hàng đợi.
 - Harness không merge, phát hành, gắn tag, xoá nhánh hay force-push, và không có capability nào làm được những việc đó.
 - Runtime: `codex`, `claude` và `omp`, theo mức qk hỗ trợ.
