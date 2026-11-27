@@ -4,7 +4,7 @@
 
 A personal agent harness. It runs one piece of work that has several tasks on top of [qk](https://github.com/dakiquang/qk): a contract written and reviewed before any build, workers on separate worktrees (two at a time), integration onto one branch, a review by a different model family, at most one fix round per task and for the integration, and one pull request. It never merges; a person does.
 
-qk-harness depends on qk one way. It uses only qk's versioned [CLI contract](https://github.com/dakiquang/qk/blob/v0.10.0/docs/en/cli-contract.md), never imports qk's Python modules, and runs the qk pinned in [`qk.lock`](qk.lock), not the one installed on the machine.
+qk-harness depends on qk one way. It uses only qk's versioned [CLI contract](https://github.com/dakiquang/qk/blob/v0.12.0/docs/en/cli-contract.md), never imports qk's Python modules, and runs the qk pinned in [`qk.lock`](qk.lock), not the one installed on the machine.
 
 For work with one task, use qk's own `qk-run`: it is cheaper and faster. The harness is for work that splits into tasks that can be built side by side.
 

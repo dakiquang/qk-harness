@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `qk.lock` pins qk v0.12.0. Agent turns on omp now wait for commands they moved to a background job instead of
+  ending without a result, a failure the harness inherited through `qk agent run`.
+
 ### Added
 
 - `accept-contract JOB --reason TEXT`: once the contract's revision round is used and its review still does not
