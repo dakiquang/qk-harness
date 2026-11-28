@@ -1,4 +1,4 @@
-"""Capture unittest failures through its public result protocol, before fixture cleanup."""
+"""Capture unittest failures before fixture cleanup, through the result protocol where Python allows."""
 
 import os
 from pathlib import Path
@@ -90,6 +90,11 @@ class FailureCaptureMixin:
         return _process_secrets()
 
     def _capture_failure(self, test, error, status):
+        # Python < 3.11 reports each error twice to this mixin: from doCleanups, then from the result.
+        captured = self.__dict__.setdefault("_captured_failures", [])
+        if any(seen is error[1] for seen in captured):
+            return
+        captured.append(error[1])
         secrets = self.failure_secrets()
         try:
             context = self.failure_context()
@@ -110,6 +115,17 @@ class FailureCaptureMixin:
                 _report("failure capsule: {}: {}: {}".format(test.id(), context["reason"], path), secrets)
         except Exception:
             _report("diagnostic_write_failed", secrets)
+
+    def doCleanups(self):
+        # Python < 3.11 feeds errors to the result only after cleanups, when fixtures are gone;
+        # read the pending ones from the private outcome so capture still sees live fixtures.
+        if sys.version_info < (3, 11):
+            pending = getattr(getattr(self, "_outcome", None), "errors", None)
+            for test, error in list(pending or ()):
+                if error is not None:
+                    status = "failure" if issubclass(error[0], self.failureException) else "error"
+                    self._capture_failure(test, error, status)
+        return super().doCleanups()
 
     def run(self, result=None):
         own_result = result is None
