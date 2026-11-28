@@ -43,9 +43,9 @@ All notable changes to this project are documented here. The format follows
   needs no live chat to advance stages and never merges.
 - Bounded private failure capsules retain selected diagnostics before cleanup. Supported test fixtures accept
   `QK_HARNESS_TEST_ARTIFACT_DIR` outside the fixture/checkout; capture failures preserve the original error.
-- An inactive isolated CSV/JSON two-task pilot fixture, independent oracle and workflow template. The live
-  pilot still needs separate freeze, model/budget and remote-write approvals; no live result or fix for the
-  earlier unexplained build failure is claimed.
+- An isolated CSV/JSON two-task pilot fixture, independent oracle and workflow template; each live run needs
+  separate freeze, model/budget and remote-write approvals. One live run passed (#8); it neither fixes nor
+  explains the earlier unexplained build failure.
 
 ## [0.1.0] - 2026-11-25
 

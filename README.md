@@ -78,7 +78,7 @@ For an unattended job, `authorize JOB --path ... --budget-usd ... --turn-estimat
 
 ## Status
 
-Version 0.1.0. Built and tested against a stand-in qk; measured with real agents on two of qk's single-task eval cases ([measurements](docs/en/measurements.md)). One real job with two tasks reached its pull request with a person granting one extra fix round; a manual Large job with one completion task passed all four human gates and reached its PR. The [isolated two-task delegated pilot](evals/reliability-pilot/README.md) is prepared but has not run; model spending and remote writes need separate approval. This is not evidence that the earlier unexplained build failure is fixed.
+Version 0.1.0. Built and tested against a stand-in qk; measured with real agents on two of qk's single-task eval cases ([measurements](docs/en/measurements.md)). One real job with two tasks reached its pull request with a person granting one extra fix round; a manual Large job with one completion task passed all four human gates and reached its PR. The [isolated two-task delegated pilot](evals/reliability-pilot/README.md) passed once with real agents after a Python 3.9 test fix ([delegated pilot](docs/en/measurements.md#delegated-pilot)); one run is not a measured failure rate, and each further run needs separate spending and remote-write approval. This is not evidence that the earlier unexplained build failure is fixed.
 
 ## Test
 

@@ -167,7 +167,7 @@ Dùng `--repeat N` (số nguyên dương, mặc định 1) để chạy bài N l
 
 Bản tổng hợp cũng ghi trạng thái dừng, lý do, bước tiếp theo, kết quả đạt và baseline của từng lượt. Khi chỉ chạy một lượt, stdout còn chứa đầy đủ kết quả lượt chạy, gồm chi tiết tiêu chí trượt và tổng số liệu. Lệnh thoát với mã 0 khi mọi lượt dừng ở `waiting` hoặc `done`, kể cả khi chấm trượt; các trạng thái dừng khác hoặc lỗi cho mã 2.
 
-[Pilot reliability cô lập](../../evals/reliability-pilot/README.md) là fixture riêng, chưa kích hoạt, không đăng ký vào `eval`. Lượt delegated hai task thật vẫn chờ quyền riêng để freeze runner/seed, duyệt model/ngân sách và remote writes; chuẩn bị fixture không phải bằng chứng đã chạy pilot.
+[Pilot reliability cô lập](../../evals/reliability-pilot/README.md) là fixture riêng, không đăng ký vào `eval`. Lượt delegated hai task thật duy nhất được ghi ở [số đo](measurements.md#pilot-delegated); mỗi lượt sau cần quyền riêng để freeze runner/seed, duyệt model/ngân sách và remote writes.
 
 ## Giới hạn
 

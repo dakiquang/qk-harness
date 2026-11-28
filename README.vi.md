@@ -78,7 +78,7 @@ Với job tự chạy, `authorize JOB --path ... --budget-usd ... --turn-estimat
 
 ## Trạng thái
 
-Phiên bản 0.1.0. Đã build và test với một qk giả; đã đo với agent thật trên hai bài eval một task của qk ([số đo](docs/vi/measurements.md)). Một job thật có hai task đã tới pull request với một vòng sửa do người cấp thêm; một manual Large có một completion task đã qua đủ bốn cổng người duyệt và tới PR. [Pilot delegated hai task cô lập](evals/reliability-pilot/README.md) đã được chuẩn bị nhưng chưa chạy; chi phí model và remote writes cần quyền riêng. Chưa có bằng chứng failure build cũ chưa rõ nguyên nhân đã được sửa.
+Phiên bản 0.1.0. Đã build và test với một qk giả; đã đo với agent thật trên hai bài eval một task của qk ([số đo](docs/vi/measurements.md)). Một job thật có hai task đã tới pull request với một vòng sửa do người cấp thêm; một manual Large có một completion task đã qua đủ bốn cổng người duyệt và tới PR. [Pilot delegated hai task cô lập](evals/reliability-pilot/README.md) đã đạt một lần với agent thật sau khi sửa một test trên Python 3.9 ([pilot delegated](docs/vi/measurements.md#pilot-delegated)); một lượt không phải tỷ lệ lỗi đã đo, và mỗi lượt sau vẫn cần quyền riêng để chi tiền và remote writes. Chưa có bằng chứng failure build cũ chưa rõ nguyên nhân đã được sửa.
 
 ## Test
 

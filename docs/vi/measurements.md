@@ -59,8 +59,12 @@ Cùng một việc có hai task (ba sửa nhỏ trong `harness/evaluate.py`; fin
 
 Một manual Large sau đó có một completion task đã qua đủ bốn cổng người duyệt và tới [WAF PR #11](https://github.com/dakiquang/waf-upgrade-check/pull/11). Quan sát cũ rằng Large chỉ từng dừng trước cổng contract vì vậy không còn đầy đủ. Đây là bằng chứng đường manual của job đó, không phải delegated operation hay hai task song song; số đo và mặc định phía trên giữ nguyên.
 
+## Pilot delegated
+
+[Pilot delegated hai task cô lập](../../evals/reliability-pilot/README.md) đã chạy ngày 2026-11-28 (implementer `omp:openai-codex/gpt-6.1-terra`, reviewer `claude:sonnet`, soft budget USD 15). Lần đầu, [PR #7](https://github.com/dakiquang/qk-harness/pull/7), dừng ở `pr.check` vì test failure-capture của chính harness hỏng trên Python 3.9. Sau khi sửa, [PR #8](https://github.com/dakiquang/qk-harness/pull/8) qua mọi stage với tám lượt model, không vòng sửa, bốn receipt delegated cùng một grant, grader của pilot và CI sản phẩm xanh trên đúng head. Runtime báo USD 0,51 mỗi lần chạy; đó không phải hoá đơn. Một lượt đạt không phải tỷ lệ lỗi đã đo.
+
 ## Chưa đo
 
-- Một delegated Large với agent thật và hai task song song. [Fixture pilot cô lập](../../evals/reliability-pilot/README.md) đã được chuẩn bị; lượt thật vẫn chờ quyền riêng để freeze, chi tiền và publish. Chưa có kết quả pilot hoặc kết luận root cause của failure build cũ.
+- Nhiều lượt delegated Large với agent thật; pilot duy nhất phía trên không phải tỷ lệ lỗi, và chưa có kết luận root cause của failure build cũ.
 - Review từng task trên việc có nhiều task.
 - Độ khắt khe của reviewer trên ba bài `runner-review` của qk.

@@ -167,7 +167,7 @@ Use `--repeat N` (a positive integer, default 1) to run the case sequentially N 
 
 The summary also includes each run's stop state, reason, next step, pass result and baseline. With one run, stdout also includes the full run result, including failed criteria details and totals. The command exits with code 0 when every run stops at `waiting` or `done`, even if grading fails; other stop states or errors yield code 2.
 
-The [isolated reliability pilot](../../evals/reliability-pilot/README.md) is a separate, inactive fixture, not a case registered with `eval`. Its live two-task delegated run is still pending the separate runner/seed freeze, model/budget and remote-write approvals; fixture preparation is not pilot evidence.
+The [isolated reliability pilot](../../evals/reliability-pilot/README.md) is a separate fixture, not a case registered with `eval`. Its one live two-task delegated run is recorded in [measurements](measurements.md#delegated-pilot); each further run needs its own runner/seed freeze, model/budget and remote-write approvals.
 
 ## Limits
 
