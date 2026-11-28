@@ -314,7 +314,7 @@ class IntegrationTests(Sandbox):
         job_id = self.ready()
         with mock.patch.dict(os.environ, {"FAKE_GH_PERMISSION": "READ"}):
             reply = self.run_job(job_id)
-        self.assertEqual((reply["stopped"], reply["capability"]), ("blocked", "pr.open"))
+        self.assertEqual((reply["stopped"], reply["capability"]), ("blocked", "pr.open"), reply)
         self.assertIn("cannot push to this repository (viewerPermission=READ)", reply["reason"])
         from test_capabilities import sh
         self.assertEqual(sh(self.remote, "git", "branch", "--list"), "")  # nothing was pushed
