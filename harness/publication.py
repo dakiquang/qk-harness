@@ -139,12 +139,19 @@ def check_ci(job, *, deadline=None, check=None):
         if pr():
             reported = read("api", f"repos/{grant['github_repo']}/actions/runs?"
                             f"head_sha={integration['commit']}&per_page=100",
-                            "--method", "GET", "--paginate", "--jq", ".workflow_runs[] | {id, status} | @json")
+                            "--method", "GET", "--paginate", "--jq",
+                            ".workflow_runs[] | {id, status, conclusion} | @json")
             workflows = [json.loads(line) for line in reported.splitlines()]
             if any(not isinstance(run, dict) for run in workflows):
                 raise delegation.GrantError("invalid Actions runs response")
             ci["workflows"] = workflows
-            if all(run.get("status") == "completed" for run in workflows) and pr():
+            completed = all(run.get("status") == "completed" for run in workflows)
+            # A run that fails before creating jobs (startup failure) has no check in the rollup.
+            if completed and any(str(run.get("conclusion") or "").lower() not in ("success", "skipped", "neutral")
+                                 for run in workflows):
+                ci["status"] = "failed"
+                raise delegation.GrantError("CI failed for the published head; no post-PR fix round is authorized")
+            if completed and pr():
                 checkpoint()
                 ci["status"] = "success"
                 return {"pr_url": job["pr_url"], "head": integration["commit"], "ci": ci}

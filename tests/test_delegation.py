@@ -32,8 +32,10 @@ if command == 'auth token':
 elif command == 'api user':
     print(os.environ.get('FAKE_GH_LOGIN', 'publisher'))
 elif args[:1] == ['api'] and '/actions/runs?' in args[1]:
-    for index, status in enumerate(filter(None, os.environ.get('FAKE_GH_WORKFLOWS', 'completed').split(','))):
-        print(json.dumps({'id': index + 1, 'status': status}))
+    for index, item in enumerate(filter(None, os.environ.get('FAKE_GH_WORKFLOWS', 'completed').split(','))):
+        status, _, conclusion = item.partition(':')
+        print(json.dumps({'id': index + 1, 'status': status,
+                          'conclusion': conclusion or ('success' if status == 'completed' else None)}))
 elif command == 'repo view':
     print(json.dumps({'nameWithOwner': 'example/project', 'viewerPermission': 'WRITE'}))
 elif command == 'pr list':
@@ -258,6 +260,15 @@ class DelegationTests(DelegationSandbox):
         completed = coordinator.run(job_id, self.qk)
         self.assertEqual(completed["stopped"], "done", completed)
         self.assertEqual(len(state.load(job_id)["usage"]), turns)
+
+    def test_completed_failed_workflow_blocks_despite_successful_rollup(self):
+        job_id = self.new("large")
+        self.grant(job_id)
+        with mock.patch.dict(os.environ, FAKE_GH_WORKFLOWS="completed,completed:startup_failure"):
+            reply = coordinator.run(job_id, self.qk)
+        self.assertEqual(reply["stopped"], "blocked", reply)
+        self.assertEqual(reply["ci"]["status"], "failed")
+        self.assertIn("a person decides", reply["next"])
 
     def test_legacy_status_without_action_workflows_can_complete(self):
         job_id = self.new("large")
