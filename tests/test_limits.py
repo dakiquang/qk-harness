@@ -198,7 +198,7 @@ class LimitTests(Sandbox):
         outside = self.tmp / "elsewhere"
         outside.mkdir()
         (outside / "keep.txt").write_text("mine\n")
-        reply = mock.Mock(code=2, stderr="", data={"status": "blocked", "reason": "limit", "usage": None,
+        reply = mock.Mock(code=2, stderr="", data={"contract": 1, "status": "blocked", "reason": "limit", "usage": None,
                                                     "limit": {"runtime": "codex", "reset_at": None}})
         discarded = []
         with mock.patch.object(self.qk, "agent_run", return_value=reply), \

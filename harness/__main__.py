@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 import sys
 
-from harness import __version__, capabilities, coordinator, delegation, evaluate, gitops, policy, qk_cli, state
+from harness import __version__, capabilities, coordinator, delegation, diagnostics, evaluate, gitops, policy, qk_cli, state
 
 
 LOCK = Path(__file__).resolve().parent.parent / "qk.lock"
@@ -142,6 +142,12 @@ def summary(job):
             "limits": {name: {"reset_at": limit.get("reset_at"), "until": policy.until(limit)}
                        for name, limit in (job.get("limits") or {}).items()},
             "next": next_step, "findings": findings}
+    if job.get("diagnostic_ref"):
+        result["diagnostic_ref"] = job["diagnostic_ref"]
+    if job.get("recovery_required"):
+        result["recovery_required"] = job["recovery_required"]
+    if job.get("ci_check"):
+        result["ci_check"] = job["ci_check"]
     if job.get("delegation"):
         result.update(delegation=job["delegation"], budget=delegation.costs(job), ci=job.get("ci"))
     return result
@@ -203,14 +209,15 @@ def status_item(job):
         waiting = {"person": next_step}
     running = [f"{task['running']['capability']} {name}" for name, task in tasks.items()
                if task.get("running") and pid_alive(task["running"].get("pid"))]
+    if job.get("ci_check") and pid_alive(job["ci_check"].get("pid")):
+        running.append("pr.check")
     if not running and gitops.lock_held(state.job_dir(job["id"]) / "job.lock"):
         running = ["step"]
-    # A task marked running by a process that is gone: the policy still says to wait for it, but only a new
-    # `run` (which recovers it first) moves the job on.
+    # A stale PID only says the supervisor is gone, not that its writers or results are safe.
     stale = [name for name, task in tasks.items() if task.get("running") and not pid_alive(task["running"].get("pid"))]
     if stale and not running:
         waiting = {"person": f"task {stale[0]} stopped mid-step"}
-        next_step = f"run {job['id']} (recovers task {stale[0]})"
+        next_step = f"status {job['id']}"
     return {"source": "qk-harness", "id": job["id"], "title": job["task"][:60], "stage": stage,
             "step": stages.index(stage) + 1, "steps": len(stages),
             "since": job["log"][-1].get("at") if job.get("log") else created(job["id"]), "waiting_for": waiting,
@@ -257,7 +264,7 @@ def status_line(item):
     elif waiting:
         person = waiting["person"]
         detail = "waits: " + person.replace(item["id"] + " ", "", 1) if person.startswith("approve ") \
-            else f"{person} · qk-harness run" if person.endswith("stopped mid-step") else "person decides"
+            else f"{person} · inspect evidence" if person.endswith("stopped mid-step") else "person decides"
     else:
         detail = "next: " + item["next"].replace(item["id"] + " ", "", 1).replace(" " + item["id"], "", 1)
     return (prefix + detail.replace("\n", " "))[:80]
@@ -331,7 +338,7 @@ def main(argv=None):
                                          expect_red=getattr(args, "expect_red", False), fix=getattr(args, "fix", False))
     except (qk_cli.QkError, state.JobError, capabilities.Blocked, gitops.GitError, evaluate.EvalError,
             policy.Refused, delegation.GrantError) as error:
-        print(f"qk-harness: {error}", file=sys.stderr)
+        print(f"qk-harness: {diagnostics.safe_text(error)}", file=sys.stderr)
         return 2
     print(json.dumps(reply, ensure_ascii=False))
     if args.command == "eval":

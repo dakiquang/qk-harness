@@ -55,8 +55,16 @@ Cùng một việc có hai task (ba sửa nhỏ trong `harness/evaluate.py`; fin
 - Một lần chạy `csv-export` không hợp đồng dừng ở bước plan: bên plan hiểu "mỗi task tự viết test" là phải tạo file trong lượt chỉ đọc. Chạy lại thì đạt; coi là dao động.
 - Một lượt bị dừng bằng SIGTERM được `qk agent run` kết thúc gọn: không còn tiến trình agent hay thư mục tạm.
 
+## Bằng chứng manual Large
+
+Một manual Large sau đó có một completion task đã qua đủ bốn cổng người duyệt và tới [WAF PR #11](https://github.com/dakiquang/waf-upgrade-check/pull/11). Quan sát cũ rằng Large chỉ từng dừng trước cổng contract vì vậy không còn đầy đủ. Đây là bằng chứng đường manual của job đó, không phải delegated operation hay hai task song song; số đo và mặc định phía trên giữ nguyên.
+
+## Pilot delegated
+
+[Pilot delegated hai task cô lập](../../evals/reliability-pilot/README.md) đã chạy ngày 2026-11-28 (implementer `omp:openai-codex/gpt-6.1-terra`, reviewer `claude:sonnet`, soft budget USD 15). Lần đầu, [PR #7](https://github.com/dakiquang/qk-harness/pull/7), dừng ở `pr.check` vì test failure-capture của chính harness hỏng trên Python 3.9. Sau khi sửa, [PR #8](https://github.com/dakiquang/qk-harness/pull/8) qua mọi stage với tám lượt model, không vòng sửa, bốn receipt delegated cùng một grant, grader của pilot và CI sản phẩm xanh trên đúng head. Runtime báo USD 0,51 mỗi lần chạy; đó không phải hoá đơn. Một lượt đạt không phải tỷ lệ lỗi đã đo.
+
 ## Chưa đo
 
-- Một job Large qua đủ bốn cổng: lần thử duy nhất dừng trước cổng hợp đồng (xem mục Giới hạn trong hướng dẫn).
+- Nhiều lượt delegated Large với agent thật; pilot duy nhất phía trên không phải tỷ lệ lỗi, và chưa có kết luận root cause của failure build cũ.
 - Review từng task trên việc có nhiều task.
 - Độ khắt khe của reviewer trên ba bài `runner-review` của qk.

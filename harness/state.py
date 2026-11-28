@@ -1,7 +1,7 @@
 """Job state: one JSON file per job in the harness state directory, outside every repository.
 
-Every capability holds the job's lock while it runs and saves by atomic replace, so a crash leaves either the old
-or the new state, never half of one.
+State updates hold the job lock and save by atomic replace. Task turns and CI reads execute on snapshots outside
+the lock, then merge only the state they own.
 """
 
 from contextlib import contextmanager
@@ -95,3 +95,37 @@ def locked(job_id):
             yield job
         finally:
             save(job)
+
+
+def owner_alive(pid):
+    try:
+        if isinstance(pid, bool) or int(pid) <= 0:
+            return False
+        os.kill(int(pid), 0)
+        return True
+    except PermissionError:
+        return True
+    except (ProcessLookupError, TypeError, ValueError):
+        return False
+
+
+def recovery_reason(job):
+    """A dead PID is not completion evidence. Active parallel tasks may still proceed independently."""
+    if job.get("recovery_required"):
+        return job["recovery_required"]["reason"]
+    if job.get("active_step"):
+        return "a step was interrupted or is still running; inspect its evidence before resuming"
+    active = set()
+    for name, task in job["tasks"].items():
+        marker = task.get("running")
+        if marker:
+            if not owner_alive(marker.get("pid")):
+                return f"task {name} stopped without a persisted step result; inspect before resuming"
+            active.add(marker.get("events"))
+    for entry in job.get("usage", []):
+        status = entry.get("status")
+        if status == "unknown" or status == "failed" and not entry.get("terminal"):
+            return "a model turn has unknown execution/usage; inspect its evidence before resuming"
+        if status == "running" and entry.get("events") not in active:
+            return "an interrupted model turn may still be running; inspect its evidence before resuming"
+    return ""

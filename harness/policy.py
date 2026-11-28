@@ -8,7 +8,7 @@ from datetime import datetime
 import hashlib
 from pathlib import Path
 
-from harness import delegation
+from harness import delegation, gitops, state
 
 
 CAPABILITIES = {  # name -> what it may change
@@ -186,9 +186,14 @@ def _next_step(job):
     job_id = job["id"]
     if job.get("aborted"):
         return f"aborted: {job['aborted']['reason'] or 'no reason given'}"
+    reason = state.recovery_reason(job)
+    if reason:
+        return f"a person decides: {reason}"
+    if job.get("ci_check"):
+        return f"wait: CI check {job_id} is running; inspect before reclaiming an interrupted claim"
     try:
         delegation.check(job)
-    except delegation.GrantError as error:
+    except (delegation.GrantError, gitops.GitError) as error:
         return f"a person decides: {error}"
     if job["plan"] is None:
         return f"plan.write {job_id}"
@@ -345,12 +350,14 @@ def check(job, capability, target=None, *, expect_red=False, fix=False):
     """Raise Refused unless `capability` may run now on `target` (a task name or "integration")."""
     _require(capability in CAPABILITIES, f"unknown capability {capability!r}")
     _require(not job.get("aborted"), "the job is aborted")
+    _require(not state.recovery_reason(job), state.recovery_reason(job))
+    _require(not job.get("ci_check"), "a CI check already owns this job; inspect if it was interrupted")
     try:
         delegation.check(job)
         spec = step_spec(job, capability, target)
         if spec:
             delegation.check_turn(job, spec)
-    except delegation.GrantError as error:
+    except (delegation.GrantError, gitops.GitError) as error:
         raise Refused(str(error)) from error
     _require(not (job.get("delegation") and job["pr_url"] and capability != "pr.check"),
              "the delegated PR is published; no post-PR work is authorized")

@@ -55,8 +55,16 @@ The same two-task work (three small fixes in `harness/evaluate.py`; review findi
 - One `--no-contract` run of `csv-export` stopped at planning: the planner read "each task writes its tests" as a request to write files in its read-only turn. A rerun passed; treated as noise.
 - A turn stopped with SIGTERM was ended cleanly by `qk agent run`: no agent process and no scratch directory were left.
 
+## Manual Large evidence
+
+A later manual Large job with one completion task passed all four human gates and reached [WAF PR #11](https://github.com/dakiquang/waf-upgrade-check/pull/11). This corrects the earlier observation that Large had only stopped before the contract gate. It proves that manual path for that job, not delegated operation or two-task parallel execution; the measurements and defaults above are unchanged.
+
+## Delegated pilot
+
+The [isolated two-task delegated pilot](../../evals/reliability-pilot/README.md) ran on 2026-11-28 (implementer `omp:openai-codex/gpt-6.1-terra`, reviewer `claude:sonnet`, soft budget USD 15). The first attempt, [PR #7](https://github.com/dakiquang/qk-harness/pull/7), stopped at `pr.check`: the harness's own failure-capture test failed on Python 3.9. After that fix, [PR #8](https://github.com/dakiquang/qk-harness/pull/8) passed every stage with eight model turns, no fix round, four delegated receipts bound to one grant, and the pilot grader plus product CI green on its exact head. The runtimes reported USD 0.51 per attempt; that is not an invoice. One passing run is not a measured failure rate.
+
 ## Not measured yet
 
-- A Large job through all four gates: the one attempt stopped before the contract gate (see the guide's Limits).
+- Repeated real-agent delegated Large runs; the single pilot above is not a failure rate, and no historical build-failure root cause is claimed.
 - Per-task review on work with several tasks.
 - Reviewer strictness on qk's three `runner-review` cases.

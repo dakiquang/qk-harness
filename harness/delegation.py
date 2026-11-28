@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 import time
 
-from harness import gitops, state
+from harness import diagnostics, gitops, state
 
 
 class GrantError(Exception):
@@ -58,8 +58,8 @@ def github_slug(url):
     return match.group(1)
 
 
-def origin(job):
-    return gitops.git(job["repo"], "remote", "get-url", "origin")
+def origin(job, *, deadline=None):
+    return gitops.git(job["repo"], "remote", "get-url", "origin", deadline=deadline)
 
 
 def authorize(job_id, paths, budget_usd, turn_estimate_usd, gh_user):
@@ -71,6 +71,8 @@ def authorize(job_id, paths, budget_usd, turn_estimate_usd, gh_user):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", gh_user or ""):
         raise GrantError("authorize needs the GitHub login allowed to publish (--gh-user)")
     with state.locked(job_id) as job:
+        if state.recovery_reason(job):
+            raise GrantError(state.recovery_reason(job))
         if job.get("aborted") or job.get("pr_url"):
             raise GrantError("an aborted or already published job cannot receive a new grant")
         if job.get("plan") and not job.get("delegation_history"):
@@ -108,11 +110,11 @@ def revoke(job_id, reason):
             raise GrantError("this job has no delegation to revoke")
         job["delegation"]["revoked"] = True
         job["log"].append({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "capability": "revoke",
-                           "status": "done", "actor": "user", "reason": reason})
+                           "status": "done", "actor": "user", "reason": diagnostics.safe_text(reason)})
     return {"status": "done", "reason": "delegation revoked; running turns are not cancelled"}
 
 
-def check(job):
+def check(job, *, deadline=None):
     grant = job.get("delegation")
     if grant is None:
         return
@@ -122,9 +124,9 @@ def check(job):
         raise GrantError("the delegation receipt changed")
     if grant["binding"] != binding(job):
         raise GrantError("task/repository/base/models/options/branch changed outside the delegation")
-    if origin(job) != grant["origin"]:
+    if origin(job, deadline=deadline) != grant["origin"]:
         raise GrantError("origin changed outside the delegation")
-    if not job.get("plan") and gitops.git(job["repo"], "rev-parse", "HEAD") != job["base_sha"]:
+    if not job.get("plan") and gitops.git(job["repo"], "rev-parse", "HEAD", deadline=deadline) != job["base_sha"]:
         raise GrantError("the planning checkout is not at the delegated base commit")
     if job.get("plan"):
         scopes = grant["paths"]
@@ -142,16 +144,19 @@ def check(job):
 def costs(job):
     known, unknown, unresolved = 0.0, [], []
     for turn in job.get("usage", []):
-        if turn.get("status") == "running":
-            unresolved.append(turn.get("events") or turn["spec"])
-            continue
+        pending = turn.get("status") in ("running", "unknown") or \
+            turn.get("status") == "failed" and not turn.get("terminal")
         amount = (turn.get("usage") or {}).get("cost_usd")
         if isinstance(amount, (int, float)) and not isinstance(amount, bool) and math.isfinite(amount) and amount >= 0:
             known += amount
-        else:
+        elif not pending:
             unknown.append(turn["spec"])
+        if pending:
+            unresolved.append(turn.get("events") or turn["spec"])
     grant = job.get("delegation") or {}
-    reserved = sum(task.get("running", {}).get("estimated_usd", 0) for task in job["tasks"].values())
+    terminal_events = {turn["events"] for turn in job.get("usage", []) if turn.get("terminal") and turn.get("events")}
+    reserved = sum(marker.get("estimated_usd", 0) for task in job["tasks"].values()
+                   for marker in [task.get("running", {})] if marker.get("events") not in terminal_events)
     return {"known_usd": known, "unknown_specs": unknown, "unresolved_turns": unresolved,
             "reserved_usd": reserved, "limit_usd": grant.get("budget_usd"),
             "turn_estimate_usd": grant.get("turn_estimate_usd"), "hard_cap": False}
@@ -159,6 +164,8 @@ def costs(job):
 
 def check_turn(job, spec):
     check(job)
+    if job.get("recovery_required") or any(turn.get("status") == "unknown" for turn in job.get("usage", [])):
+        raise GrantError("a model/native operation has unknown execution; inspect before spending again")
     grant = job.get("delegation")
     if not grant:
         return
@@ -177,4 +184,4 @@ def check_turn(job, spec):
 
 def interrupted(job):
     """Never clear an orphaned worker marker and blindly re-spend its missing usage."""
-    return any(turn.get("status") == "running" for turn in job.get("usage", []))
+    return bool(state.recovery_reason(job))

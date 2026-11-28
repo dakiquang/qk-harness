@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 import re
 import time
 
-from harness import delegation, gitops, policy, publication, qk_cli, state
+from harness import delegation, diagnostics, gitops, policy, publication, qk_cli, state
 
 
 PLAN_RE = re.compile(r"<<<QK-PLAN\s*\n(.*?)\n\s*QK-PLAN>>>", re.S)
@@ -43,8 +43,22 @@ def now():
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
-def record(job, capability, status, reason=""):
-    job["log"].append({"at": now(), "capability": capability, "status": status, "reason": reason})
+def record(job, capability, status, reason="", *, error=None, target=None):
+    reason = diagnostics.safe_text(reason)
+    entry = {"at": now(), "capability": capability, "status": status, "reason": reason}
+    job["log"].append(entry)
+    if status in ("blocked", "refused", "unknown"):
+        cause = getattr(error, "native_error", None) or (
+            error.__cause__ if error and isinstance(error.__cause__, gitops.GitError) else error)
+        details = getattr(cause, "details", {})
+        artifact = diagnostics.capture(state.job_dir(job["id"]) / "diagnostics",
+                                       dict(details, job_id=job["id"], capability=capability,
+                                            target=target, status=status, reason=reason))
+        if artifact:
+            entry["diagnostic_ref"] = job["diagnostic_ref"] = str(artifact.relative_to(state.job_dir(job["id"])))
+        if isinstance(cause, gitops.GitError) and cause.uncertain:
+            job["recovery_required"] = {"reason": reason, "operation": details.get("operation"),
+                                        "diagnostic_ref": job.get("diagnostic_ref")}
 
 
 def hold(job, capability, limit, reason):
@@ -57,8 +71,28 @@ def hold(job, capability, limit, reason):
 # --------------------------------------------------------------- agent turns
 
 
+def persist_turn(job, entry):
+    """Save a receipt before spending and after a reply; never merge an unlocked job snapshot wholesale."""
+    if not job.get("_unlocked_turn"):
+        state.save(job)
+        return
+    job["tasks"][job["_target"]]["running"]["events"] = entry["events"]
+    with state.locked(job["id"]) as live:
+        existing = next((item for item in live.setdefault("usage", []) if item.get("events") == entry["events"]), None)
+        if existing is None:
+            delegation.check(live)
+            if (live.get("delegation") or {}).get("sha256") != (job.get("delegation") or {}).get("sha256"):
+                raise Blocked("delegation changed before the turn started")
+            live["usage"].append(entry.copy())
+        else:
+            existing.update(entry)
+        live["tasks"][job["_target"]]["running"]["events"] = entry["events"]
+        if job.get("recovery_required"):
+            live["recovery_required"] = job["recovery_required"]
+
+
 def turn(qk, job, spec, cwd, prompt, *, write, add_dirs=()):
-    """One agent turn; delegated usage is durable before spending, including interrupted/failed turns."""
+    """One supervised turn; pending and terminal evidence is durable in manual and delegated jobs."""
     try:
         if not job.get("_budget_reserved"):
             delegation.check_turn(job, spec)
@@ -68,29 +102,35 @@ def turn(qk, job, spec, cwd, prompt, *, write, add_dirs=()):
     turns.mkdir(exist_ok=True)
     stem = turns / f"{time.strftime('%H%M%S')}-{secrets.token_hex(3)}"
     entry = {"spec": spec, "write": write, "capability": job.get("current"), "status": "running",
-             "usage": None, "seconds": None, "events": f"{stem}.events.jsonl"}
-    if job.get("delegation") and job.get("_unlocked_turn"):
-        with state.locked(job["id"]) as live:
-            delegation.check(live)
-            if live["delegation"]["sha256"] != job["delegation"]["sha256"]:
-                raise Blocked("delegation changed before the turn started")
-            live.setdefault("usage", []).append(entry.copy())
-            live["tasks"][job["_target"]]["running"]["events"] = entry["events"]
+             "usage": None, "seconds": None, "events": f"{stem}.events.jsonl", "target": job.get("_target")}
     job.setdefault("usage", []).append(entry)
-    if job.get("delegation") and not job.get("_unlocked_turn"):
-        state.save(job)  # caller holds the job lock; a killed runner must not silently retry paid work
+    persist_turn(job, entry)
     try:
         reply = qk.agent_run(spec, cwd, prompt, write=write, add_dirs=[shared(job), *add_dirs],
                              events=entry["events"])
     except (qk_cli.QkError, OSError) as error:
-        entry["status"] = "failed"
+        entry["status"] = "unknown"
+        job["recovery_required"] = {"reason": "model execution is unknown; inspect its events before resuming",
+                                    "events": entry["events"]}
+        persist_turn(job, entry)
         raise Blocked(str(error)) from error
     data = reply.data if isinstance(reply.data, dict) else {}
-    entry.update(status=data.get("status") or "failed", usage=data.get("usage"), seconds=data.get("seconds"))
+    terminal = type(data.get("contract")) is int and data.get("contract") == qk_cli.CONTRACT and (
+        data.get("status") == "done" and isinstance(data.get("result"), dict) and reply.code == 0 or
+        data.get("status") in ("blocked", "needs_input") and reply.code == 2)
+    entry.update(status=data.get("status") if terminal else "unknown", terminal=terminal,
+                 usage=data.get("usage"), seconds=data.get("seconds"))
+    if not terminal:
+        job["recovery_required"] = {"reason": "model reply has no valid terminal receipt; inspect before resuming",
+                                    "events": entry["events"]}
+    persist_turn(job, entry)
+    if not terminal:
+        raise Blocked(f"{spec} reply has no valid terminal receipt; inspect before resuming")
     Path(f"{stem}.out.md").write_text(str(data.get("text") or reply.stderr), encoding="utf-8")
     limit = data.get("limit")
-    if isinstance(limit, dict) and limit.get("runtime"):
+    if terminal and isinstance(limit, dict) and limit.get("runtime"):
         entry["status"] = "limited"
+        persist_turn(job, entry)
         if write and Path(cwd).resolve().is_relative_to(state.job_dir(job["id"]).resolve()):
             gitops.discard(cwd)
         raise Limited(f"{spec} turn stopped at its usage limit: "
@@ -510,7 +550,7 @@ def integrate_run(job, qk):
         if merge.returncode != 0:
             gitops.git(worktree, "merge", "--abort", check=False)
             raise Blocked(f"task {name} does not merge cleanly into {job['integration']['branch']}: "
-                          f"{(merge.stdout + merge.stderr).strip()[-300:]}; a person resolves it")
+                          f"{(merge.stdout + merge.stderr).strip()[-300:]}; a person resolves it") from merge.native_error
     job["integration"]["merged"] = True
     job["integration"]["commit"] = gitops.git(worktree, "rev-parse", "HEAD")
     return {"commit": job["integration"]["commit"], "tasks": list(job["tasks"])}
@@ -542,8 +582,68 @@ def pr_open(job, qk):
 
 ACTIONS = {"plan.write": plan_write, "contract.write": contract_write, "contract.review": contract_review,
            "build.run": build_run, "verify.run": verify_run, "review.run": review_run,
-           "pr.check": lambda job, qk: publication.check_ci(job),
+           # CI has its own claim/snapshot path; it must never wait while holding the job lock.
            "integrate.run": integrate_run, "pr.open": pr_open}
+
+def run_ci(job_id, qk):
+    """Claim under lock, poll outside it, and accept only a result still owned by this authority/head."""
+    with state.locked(job_id) as job:
+        try:
+            policy.check(job, "pr.check")
+        except policy.Refused as error:
+            record(job, "pr.check", "refused", str(error), error=error)
+            return {"status": "refused", "capability": "pr.check", "reason": str(error), "next": policy.next_step(job)}
+        claim = {"id": secrets.token_hex(8), "pid": os.getpid(), "since": now(),
+                 "authority": job["delegation"]["sha256"], "binding": delegation.binding(job),
+                 "head": job["integration"]["commit"], "pr_url": job["pr_url"]}
+        job["ci_check"] = claim
+        job["ci"] = {"head": claim["head"], "status": "pending", "checks": []}
+        work = copy.deepcopy(job)
+    deadline = time.monotonic() + publication.CI_TIMEOUT
+
+    def validate(live):
+        grant = live.get("delegation") or {}
+        if live.get("ci_check") != claim or live.get("aborted") or grant.get("revoked") or \
+                grant.get("sha256") != claim["authority"] or \
+                grant.get("sha256") != delegation.digest({k: v for k, v in grant.items() if k != "sha256"}) or \
+                delegation.binding(live) != claim["binding"] or live["integration"].get("commit") != claim["head"] or \
+                live["pr_url"] != claim["pr_url"] or state.recovery_reason(live):
+            raise delegation.GrantError("CI claim/head/authority changed; stale result is not accepted")
+
+    def checkpoint():
+        with state.locked(job_id) as live:
+            validate(live)
+            delegation.check(live, deadline=deadline)
+            if work["ci"].get("status") != "success":
+                live["ci"] = copy.deepcopy(work["ci"])
+
+    status, reason, details, failure = "unknown", "CI check interrupted", {}, None
+    try:
+        details = publication.check_ci(work, deadline=deadline, check=checkpoint)
+        status, reason = "done", ""
+    except (gitops.GitError, delegation.GrantError, json.JSONDecodeError) as error:
+        status, reason, failure = "blocked", str(error), error
+    finally:
+        with state.locked(job_id) as live:
+            if live.get("ci_check") == claim:
+                try:
+                    validate(live)
+                except delegation.GrantError as error:
+                    status, reason, failure = "blocked", str(error), error
+                else:
+                    live["ci"] = work["ci"]
+                if status == "unknown":
+                    live["recovery_required"] = {"reason": reason}
+                record(live, "pr.check", status, reason, error=failure)
+                if not live.get("recovery_required"):
+                    live.pop("ci_check", None)
+            else:
+                status, reason, details = "refused", "CI claim changed; no state was overwritten", {}
+            step = policy.next_step(live)
+    if status != "done":
+        details = {}
+    return dict(details, status=status, capability="pr.check", reason=diagnostics.safe_text(reason), next=step)
+
 
 
 UNLOCKED = ("build.run", "review.run")  # on one task: the agent turn runs without holding the job lock
@@ -556,8 +656,9 @@ def run_unlocked(job_id, capability, qk, target, fix):
         try:
             policy.check(job, capability, target, fix=fix)
         except policy.Refused as refused:
-            record(job, capability, "refused", str(refused))
-            return {"status": "refused", "capability": capability, "reason": str(refused), "next": policy.next_step(job)}
+            record(job, capability, "refused", str(refused), error=refused, target=target)
+            return {"status": "refused", "capability": capability, "reason": diagnostics.safe_text(refused),
+                    "next": policy.next_step(job)}
         job["tasks"][target]["running"] = {"capability": capability, "since": now(), "pid": os.getpid()}
         if job.get("delegation"):
             spec = policy.step_spec(job, capability, target)
@@ -567,17 +668,28 @@ def run_unlocked(job_id, capability, qk, target, fix):
         work["current"] = capability
         work["_budget_reserved"], work["_unlocked_turn"], work["_target"] = True, True, target
     seen = len(work.get("usage", []))
-    status, reason, details, limit = "done", "", {}, None
+    status, reason, details, limit, failure = "unknown", "step did not return", {}, None, None
     try:
-        details = build_run(work, qk, target, fix=fix) if capability == "build.run" else review_run(work, qk, target)
+        if capability == "build.run":
+            details = build_run(work, qk, target, fix=fix)
+        else:
+            details = review_run(work, qk, target)
+        status = "done"
     except Limited as error:
         status, reason, limit = "limited", str(error), error.limit
         details = {"limit": limit}
-    except (Blocked, gitops.GitError, delegation.GrantError) as error:
-        status, reason = "blocked", str(error)
+    except (Blocked, gitops.GitError, delegation.GrantError, json.JSONDecodeError) as error:
+        status, reason, failure = "blocked", str(error), error
+    except BaseException as error:
+        failure = error
+        reason = diagnostics.safe_text(str(getattr(error, "native_error", error)) or type(error).__name__)
+        raise
     finally:
         with state.locked(job_id) as job:
-            work["tasks"][target].pop("running", None)
+            if work.get("recovery_required"):
+                job["recovery_required"] = work["recovery_required"]
+            if status == "unknown":
+                job["recovery_required"] = {"reason": reason}
             job["tasks"][target] = work["tasks"][target]
             for entry in work.get("usage", [])[seen:]:
                 existing = next((item for item in job.setdefault("usage", [])
@@ -589,14 +701,23 @@ def run_unlocked(job_id, capability, qk, target, fix):
             if limit:
                 hold(job, capability, limit, reason)
             else:
-                record(job, capability, status, reason)
+                record(job, capability, status, reason, error=failure, target=target)
+            if status == "done":
+                job["tasks"][target]["running"]["completed"] = True
+                state.save(job)  # positive step-result proof precedes clearing its marker
+            uncertain = status == "unknown" or work.get("recovery_required") or \
+                isinstance(failure, gitops.GitError) and failure.uncertain
+            if not uncertain:
+                job["tasks"][target].pop("running", None)
             step = policy.next_step(job)
-    return dict(details, status=status, capability=capability, reason=reason, next=step, task=target)
+    return dict(details, status=status, capability=capability, reason=diagnostics.safe_text(reason), next=step, task=target)
 
 
 def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
     """Check, act, record, and report {status, reason, next, ...}. The job lock is held throughout, except for
     a task's build or review, which runs on a copy so that several tasks can run at once."""
+    if capability == "pr.check":
+        return run_ci(job_id, qk)
     if capability in UNLOCKED and target not in (None, "integration"):
         with state.locked(job_id) as job:
             known = target in job["tasks"]
@@ -606,10 +727,13 @@ def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
         try:
             policy.check(job, capability, target, expect_red=expect_red, fix=fix)
         except policy.Refused as refused:
-            record(job, capability, "refused", str(refused))
-            return {"status": "refused", "capability": capability, "reason": str(refused), "next": policy.next_step(job)}
+            record(job, capability, "refused", str(refused), error=refused, target=target)
+            return {"status": "refused", "capability": capability, "reason": diagnostics.safe_text(refused),
+                    "next": policy.next_step(job)}
         action = ACTIONS[capability]
         job["current"] = capability
+        job["active_step"] = {"capability": capability, "pid": os.getpid(), "since": now()}
+        state.save(job)
         try:
             if capability == "build.run" and target == "integration":
                 details = integration_fix(job, qk)
@@ -625,11 +749,20 @@ def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
                 details = action(job, qk)
         except Limited as error:
             hold(job, capability, error.limit, str(error))
-            return {"status": "limited", "capability": capability, "reason": str(error), "limit": error.limit,
+            job.pop("active_step", None)
+            return {"status": "limited", "capability": capability, "reason": diagnostics.safe_text(error), "limit": error.limit,
                     "next": policy.next_step(job)}
         except (Blocked, gitops.GitError, delegation.GrantError, json.JSONDecodeError) as error:
-            record(job, capability, "blocked", str(error))
-            return {"status": "blocked", "capability": capability, "reason": str(error), "next": policy.next_step(job)}
+            record(job, capability, "blocked", str(error), error=error, target=target)
+            job.pop("active_step", None)
+            return {"status": "blocked", "capability": capability, "reason": diagnostics.safe_text(error),
+                    "next": policy.next_step(job)}
+        except BaseException as error:
+            reason = diagnostics.safe_text(str(getattr(error, "native_error", error)) or type(error).__name__)
+            job["recovery_required"] = {"reason": reason}
+            record(job, capability, "unknown", reason, error=error, target=target)
+            raise
+        job.pop("active_step", None)
         record(job, capability, "done")
         return dict(details, status="done", capability=capability, reason="", next=policy.next_step(job))
 

@@ -14,6 +14,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
+
+from harness import diagnostics, gitops
 
 
 CONTRACT = 1
@@ -57,10 +60,10 @@ def state_root():
 
 
 def _git(cwd, *args):
-    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise QkError(f"git {' '.join(args[:2])} failed in {cwd}: {proc.stderr.strip()[-500:]}")
-    return proc.stdout.strip()
+    try:
+        return gitops.git(cwd, *args)
+    except gitops.GitError as error:
+        raise QkError(str(error)) from error
 
 
 def fetch(lock, root=None):
@@ -73,9 +76,8 @@ def fetch(lock, root=None):
                           f"Remove {target} and run again")
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_name(f"{lock['sha']}.partial-{os.getpid()}")
-    shutil.rmtree(partial, ignore_errors=True)
-    partial.mkdir()
+    partial = Path(tempfile.mkdtemp(prefix=f"{lock['sha']}.partial-", dir=str(target.parent)))
+    cleanup = True
     try:
         _git(partial, "init", "-q")
         tag = f"refs/tags/{lock['tag']}"
@@ -86,8 +88,16 @@ def fetch(lock, root=None):
                           f"{lock['sha'][:12]}. Do not run; check who moved the tag, then update qk.lock on purpose")
         _git(partial, "checkout", "-q", "--detach", found)
         partial.rename(target)
+    except QkError as error:
+        cleanup = not isinstance(error.__cause__, gitops.GitError) or not error.__cause__.uncertain
+        if not cleanup:
+            diagnostics.capture(partial / "diagnostics", dict(error.__cause__.details, capability="bootstrap",
+                                                              reason=str(error)))
+            raise QkError(f"{error}; partial checkout preserved at {partial}; inspect before retrying") from error
+        raise
     finally:
-        shutil.rmtree(partial, ignore_errors=True)
+        if cleanup:
+            shutil.rmtree(partial, ignore_errors=True)
     return target
 
 
@@ -133,7 +143,12 @@ class Qk:
                 out, err = proc.communicate(timeout=TERM_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.communicate()
+                try:
+                    proc.communicate(timeout=gitops.KILL_GRACE)
+                except subprocess.TimeoutExpired:
+                    for stream in (proc.stdout, proc.stderr):
+                        stream.close()
+                    raise QkError(f"qk {' '.join(argv[:2])} cleanup is unconfirmed; inspect before resuming") from None
                 raise QkError(f"qk {' '.join(argv[:2])} ignored SIGTERM and was killed") from None
             raise QkError(f"qk {' '.join(argv[:2])} did not finish within {timeout}s and was stopped; "
                           f"its report was: {out.strip()[-300:] or err.strip()[-300:]}") from None

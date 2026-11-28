@@ -58,7 +58,7 @@ else:
 '''
 
 
-class DelegationTests(Sandbox):
+class DelegationSandbox(Sandbox):
     def setUp(self):
         super().setUp()
         # Only GitHub transport is redirected. All branch/worktree/commit operations use real Git.
@@ -89,6 +89,9 @@ os.execv(REAL_GIT, [REAL_GIT, *args])
         return subprocess.run([sys.executable, "-m", "harness", "--lock", str(self.lock), *args],
                               cwd=ROOT, input="", capture_output=True, text=True, timeout=40,
                               start_new_session=True)
+
+
+class DelegationTests(DelegationSandbox):
 
     def test_one_authorization_runs_large_to_published_checked_pr_in_fresh_process(self):
         job_id = self.new("large")
@@ -165,7 +168,7 @@ os.execv(REAL_GIT, [REAL_GIT, *args])
     def test_failed_paid_turn_is_charged_before_retry(self):
         job_id = self.new("large")
         self.grant(job_id, budget=0.2)
-        response = qk_cli.Result(2, {"status": "blocked", "usage": {"cost_usd": 0.25}}, "failed")
+        response = qk_cli.Result(2, {"contract": 1, "status": "blocked", "usage": {"cost_usd": 0.25}}, "failed")
         with mock.patch.object(self.qk, "agent_run", return_value=response) as run:
             self.assertEqual(self.run_cap(job_id, "plan.write")["status"], "blocked")
             self.assertEqual(self.run_cap(job_id, "plan.write")["status"], "refused")
@@ -338,7 +341,8 @@ os.execv(REAL_GIT, [REAL_GIT, *args])
                 process.communicate(timeout=5)
         resumed = self.invoke("run", job_id)
         self.assertEqual(resumed.returncode, 2, resumed.stdout + resumed.stderr)
-        self.assertIn("unresolved", json.loads(resumed.stdout)["reason"])
+        self.assertEqual(json.loads(resumed.stdout)["stopped"], "blocked")
+        self.assertEqual(state.load(job_id)["usage"][0]["status"], "running")
         entries = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(sum(entry["argv"][:2] == ["agent", "run"] for entry in entries), 1)
 

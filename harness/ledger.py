@@ -5,9 +5,8 @@
 from datetime import datetime, timezone
 import hashlib
 import json
-import os
 
-from harness import __version__, capabilities, gitops, policy, state
+from harness import __version__, capabilities, diagnostics, gitops, policy, state
 
 
 REVIEW_CAPABILITIES = ("contract.review", "review.run")
@@ -110,31 +109,34 @@ def record(job_id, qk, step, stopped=None):
         state.save(job)  # the reason is on disk before the record that points qk brief to it exists
         reply = qk.log_run(data, f"qk-harness {__version__}", state.job_dir(job_id))
         if reply.code != 0 or not isinstance(reply.data, dict):
-            return {"error": reply.stderr.strip()[-300:] or "qk log run failed"}
+            return {"error": diagnostics.safe_text(reply.stderr.strip()[-300:] or "qk log run failed")}
         job["ledger_revision"] = data["ledger_revision"]
         job["logged"] = digest
         return {"id": reply.data["id"], "stage": stage}
 
 
 def recover(job_id):
-    """Before a resume: clear tasks left `running` by a process that is gone (or by this process before the
-    loop started, so no turn of it is still running), and say which."""
+    """Clear only a dead owner's atomically persisted step result, never a bare stale PID."""
     cleared = []
     with state.locked(job_id) as job:
+        if job.get("recovery_required"):
+            return cleared
         for name, task in job["tasks"].items():
-            running = task.get("running")
-            if not running:
+            marker = task.get("running")
+            if not marker or state.owner_alive(marker.get("pid")) or not marker.get("completed"):
                 continue
-            try:
-                pid = int(running.get("pid", 0))
-                os.kill(pid, 0)
-                alive = pid > 0 and pid != os.getpid()
-            except (OSError, ValueError):
-                alive = False
-            if not alive:
-                del task["running"]
-                cleared.append(name)
+            receipt = next((turn for turn in job.get("usage", [])
+                            if turn.get("events") == marker.get("events") and turn.get("terminal")), None)
+            if not receipt or not task.get("commit"):
+                continue
+            branch = gitops.git(task["worktree"], "symbolic-ref", "--short", "HEAD", check=False)
+            if branch.returncode or branch.stdout.strip() != task["branch"]:
+                continue
+            if gitops.git(task["worktree"], "rev-parse", "HEAD") != task["commit"] or \
+                    not gitops.is_clean(task["worktree"]):
+                continue
+            del task["running"]
+            cleared.append(name)
         if cleared:
-            capabilities.record(job, "resume", "done",
-                                "cleared tasks left running by a stopped process: " + ", ".join(cleared))
+            capabilities.record(job, "resume", "done", "recovered persisted task results: " + ", ".join(cleared))
     return cleared

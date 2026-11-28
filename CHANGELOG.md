@@ -10,6 +10,20 @@ All notable changes to this project are documented here. The format follows
 
 - `qk.lock` pins qk v0.12.0. Agent turns on omp now wait for commands they moved to a background job instead of
   ending without a result, a failure the harness inherited through `qk agent run`.
+- Native Git/gh invocations are bounded: Git reads 30 s, local writes 120 s, network operations 300 s and
+  `gh` 60 s, with up to 5 s TERM and 5 s KILL/cleanup grace. Uncertain bootstrap checkouts are preserved;
+  the qk supervisor's final pipe drain is bounded rather than waiting indefinitely.
+- Manual and delegated turns persist pending/terminal evidence. Dead PIDs alone no longer clear running
+  markers; unknown execution or uncertain writes block resume/direct capabilities, and reauthorization
+  cannot clear recovery guards. Terminal Codex replies without USD retain the existing quota policy.
+- CI claims release the job lock during network reads/polling, so revoke can be recorded while a request
+  is pending without cancelling it immediately. Concurrent runs wait and status retains the running claim;
+  stale or revoked results cannot complete the job.
+- Only timed-out logical PR/Actions GET reads with confirmed cleanup get at most two attempts total
+  (initial plus one retry), within the same 1800 s CI deadline. Normal pending-CI polling and runtime
+  usage-limit waiting are separate; auth failures, model turns and Git writes gain no retry.
+- Newly created delegated PRs are draft for the controlled pilot; manual publication and the exact-head,
+  base/state, reported-check and registered-Actions guards remain unchanged.
 
 ### Added
 
@@ -27,6 +41,11 @@ All notable changes to this project are documented here. The format follows
   evidence body, and checks reported CI and registered GitHub Actions runs for the exact reviewed head with
   `pr.check`. CI failures/pending/head drift do not report completion or grant a post-PR fix loop. The runner
   needs no live chat to advance stages and never merges.
+- Bounded private failure capsules retain selected diagnostics before cleanup. Supported test fixtures accept
+  `QK_HARNESS_TEST_ARTIFACT_DIR` outside the fixture/checkout; capture failures preserve the original error.
+- An isolated CSV/JSON two-task pilot fixture, independent oracle and workflow template; each live run needs
+  separate freeze, model/budget and remote-write approvals. One live run passed (#8); it neither fixes nor
+  explains the earlier unexplained build failure.
 
 ## [0.1.0] - 2026-11-25
 
