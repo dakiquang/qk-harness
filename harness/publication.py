@@ -103,10 +103,16 @@ def check_ci(job):
             reported = gitops.gh(
                 integration["worktree"], "api",
                 f"repos/{grant['github_repo']}/actions/runs?head_sha={integration['commit']}&per_page=100",
-                "--paginate", "--jq", ".workflow_runs[] | {id, status} | @json", env=env)
+                "--paginate", "--jq", ".workflow_runs[] | {id, status, conclusion} | @json", env=env)
             workflows = [json.loads(line) for line in reported.splitlines()]
             job["ci"]["workflows"] = workflows
             if all(run.get("status") == "completed" for run in workflows):
+                # A run that fails before creating jobs (startup failure) has no check in the rollup.
+                if any(str(run.get("conclusion") or "").lower() not in ("success", "skipped", "neutral")
+                       for run in workflows):
+                    job["ci"].update(status="failed",
+                                     reason="CI failed for the published head; no post-PR fix round is authorized")
+                    raise delegation.GrantError(job["ci"]["reason"])
                 job["ci"]["status"] = "success"
                 return {"pr_url": job["pr_url"], "head": integration["commit"], "ci": job["ci"]}
         if time.monotonic() >= deadline:
