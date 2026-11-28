@@ -1,0 +1,45 @@
+# Grade the exact PR head with the oracle from its immutable pilot base.
+name: reliability-pilot
+
+on:
+  pull_request:
+    branches: ["pilot/reliability-base-261128-214207"]
+
+permissions:
+  contents: read
+
+jobs:
+  reliability-pilot:
+    name: reliability-pilot
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact PR head solutions
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: target
+          persist-credentials: false
+      - name: Check out oracle from frozen PR base E
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: frozen-oracle
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Grade actual head with base oracle and record identity
+        env:
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C frozen-oracle rev-parse HEAD)" = "$EXPECTED_BASE"
+          test "$(git -C target rev-parse HEAD)" = "$EXPECTED_HEAD"
+          echo "base=$EXPECTED_BASE head=$EXPECTED_HEAD"
+          sha256sum frozen-oracle/evals/reliability-pilot/check.py | tee oracle.sha256
+          grade_status=0
+          python3 -I frozen-oracle/evals/reliability-pilot/check.py --repo target --task all || grade_status=$?
+          sha256sum frozen-oracle/evals/reliability-pilot/check.py
+          sha256sum --check oracle.sha256
+          exit "$grade_status"
