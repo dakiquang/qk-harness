@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 import sys
 
-from harness import __version__, capabilities, coordinator, evaluate, gitops, policy, qk_cli, state
+from harness import __version__, capabilities, coordinator, delegation, evaluate, gitops, policy, qk_cli, state
 
 
 LOCK = Path(__file__).resolve().parent.parent / "qk.lock"
@@ -57,6 +57,17 @@ def parser():
                      help="sleep until a usage limit resets and carry on (default: on with --until)")
     run.add_argument("--until", metavar="HH:MM", type=clock,
                      help="never wait for a usage limit past this local time")
+    authorize = commands.add_parser("authorize", help="grant one job scope, a soft USD budget and PR publication")
+    authorize.add_argument("job")
+    authorize.add_argument("--path", dest="paths", action="append", required=True,
+                           help="allowed repository-relative file/directory; repeat for the task's full scope")
+    authorize.add_argument("--budget-usd", type=float, required=True)
+    authorize.add_argument("--turn-estimate-usd", type=float, required=True,
+                           help="estimated USD for each non-Codex turn; not a hard cap")
+    authorize.add_argument("--gh-user", required=True, help="GitHub account allowed to publish this job")
+    revoke = commands.add_parser("revoke", help="revoke delegation; does not cancel an in-flight turn")
+    revoke.add_argument("job")
+    revoke.add_argument("--reason", default="")
     abort = commands.add_parser("abort", help="stop a job for good; branches and worktrees stay for inspection")
     abort.add_argument("job")
     abort.add_argument("--reason", default="")
@@ -75,6 +86,7 @@ def parser():
     approve = commands.add_parser("approve", help="record a person's approval of one stage")
     approve.add_argument("job")
     approve.add_argument("stage", choices=("plan", "contract", "build", "integrate"))
+    approve.add_argument("--delegated", action="store_true", help="advance under an existing user grant")
     grant = commands.add_parser("grant-fix", help="give a task or the integrated branch one more fix round")
     grant.add_argument("job")
     grant.add_argument("target", help="a task name or integration")
@@ -123,13 +135,16 @@ def summary(job):
                        f"a person decides: task {name} has serious review findings")]
     findings = [{"target": name, **{key: finding.get(key) for key in ("severity", "file", "line", "claim")}}
                 for name, target in targets for finding in policy.serious(target["review"])]
-    return {"id": job["id"], "size": job["size"], "repo": job["repo"], "base": job["base"], "task": job["task"],
+    result = {"id": job["id"], "size": job["size"], "repo": job["repo"], "base": job["base"], "task": job["task"],
             "impl": job["impl"], "review": job["review"], "approvals": sorted(job["approvals"]),
             "plan": job["plan"]["file"] if job["plan"] else None, "tasks": list(job["tasks"]),
             "integration": job["integration"]["branch"], "pr_url": job["pr_url"],
             "limits": {name: {"reset_at": limit.get("reset_at"), "until": policy.until(limit)}
                        for name, limit in (job.get("limits") or {}).items()},
             "next": next_step, "findings": findings}
+    if job.get("delegation"):
+        result.update(delegation=job["delegation"], budget=delegation.costs(job), ci=job.get("ci"))
+    return result
 
 
 STAGES = ["plan", "contract", "tasks", "integrate", "review", "pr"]
@@ -172,6 +187,9 @@ def status_item(job):
         stage = "review"
     else:
         stage = "pr"
+    stages = STAGES + (["ci"] if job.get("delegation") else [])
+    if job.get("delegation") and job["pr_url"] and (job.get("ci") or {}).get("status") != "success":
+        stage = "ci"
     next_step = policy.next_step(job)
     waiting = None
     if policy.limit_wait(next_step):
@@ -180,7 +198,8 @@ def status_item(job):
             runtime = match.group(1)
             reset = policy.reset_time((job.get("limits") or {}).get(runtime) or {})
             waiting = {"limit": runtime, "until": reset.strftime("%H:%M") if reset else None}
-    elif next_step.startswith(("a person decides", "approve ")):
+    elif next_step.startswith("a person decides") or (
+            next_step.startswith("approve ") and not next_step.endswith(" --delegated")):
         waiting = {"person": next_step}
     running = [f"{task['running']['capability']} {name}" for name, task in tasks.items()
                if task.get("running") and pid_alive(task["running"].get("pid"))]
@@ -193,7 +212,7 @@ def status_item(job):
         waiting = {"person": f"task {stale[0]} stopped mid-step"}
         next_step = f"run {job['id']} (recovers task {stale[0]})"
     return {"source": "qk-harness", "id": job["id"], "title": job["task"][:60], "stage": stage,
-            "step": STAGES.index(stage) + 1, "steps": len(STAGES),
+            "step": stages.index(stage) + 1, "steps": len(stages),
             "since": job["log"][-1].get("at") if job.get("log") else created(job["id"]), "waiting_for": waiting,
             "next": next_step, "running": running, "tasks_ok": count, "tasks_total": len(tasks)}
 
@@ -207,7 +226,7 @@ def status_listing():
     for directory in directories:
         try:
             job = state.load(directory.name)
-            if not job.get("aborted") and not job.get("pr_url"):
+            if not job.get("aborted") and (not job.get("pr_url") or job.get("delegation")):
                 item = status_item(job)
                 if not item["next"].startswith("done"):
                     items.append(item)
@@ -266,7 +285,11 @@ def main(argv=None):
                         print(f"harness {len(idle)} jobs not running (qk-harness status)")
                     return 0
         elif args.command == "approve":
-            reply = capabilities.approve(args.job, args.stage)
+            reply = capabilities.approve(args.job, args.stage, delegated=args.delegated)
+        elif args.command == "authorize":
+            reply = delegation.authorize(args.job, args.paths, args.budget_usd, args.turn_estimate_usd, args.gh_user)
+        elif args.command == "revoke":
+            reply = delegation.revoke(args.job, args.reason)
         elif args.command == "grant-fix":
             reply = capabilities.grant_fix(args.job, args.target, args.reason)
         elif args.command == "accept-contract":
@@ -307,7 +330,7 @@ def main(argv=None):
                 reply = capabilities.run(args.job, args.command, qk, getattr(args, "target", None),
                                          expect_red=getattr(args, "expect_red", False), fix=getattr(args, "fix", False))
     except (qk_cli.QkError, state.JobError, capabilities.Blocked, gitops.GitError, evaluate.EvalError,
-            policy.Refused) as error:
+            policy.Refused, delegation.GrantError) as error:
         print(f"qk-harness: {error}", file=sys.stderr)
         return 2
     print(json.dumps(reply, ensure_ascii=False))

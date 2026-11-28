@@ -1,4 +1,4 @@
-"""The eight capabilities. Each checks its own preconditions, does one step, records it and says what comes next.
+"""Capabilities. Each checks its own preconditions, does one step, records it and says what comes next.
 
 Agents run only through qk (`qk agent run`); git and the pull request are the harness's own steps. Worktrees and
 branches live under the job: the integration branch `qk/<slug>` and one branch per task, `qk/<slug>--<task>`
@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 import re
 import time
 
-from harness import gitops, policy, state
+from harness import delegation, gitops, policy, publication, qk_cli, state
 
 
 PLAN_RE = re.compile(r"<<<QK-PLAN\s*\n(.*?)\n\s*QK-PLAN>>>", re.S)
@@ -58,28 +58,42 @@ def hold(job, capability, limit, reason):
 
 
 def turn(qk, job, spec, cwd, prompt, *, write, add_dirs=()):
-    """One agent turn through qk; its result block, or Blocked with qk's reason."""
+    """One agent turn; delegated usage is durable before spending, including interrupted/failed turns."""
+    try:
+        if not job.get("_budget_reserved"):
+            delegation.check_turn(job, spec)
+    except delegation.GrantError as error:
+        raise Blocked(str(error)) from error
     turns = state.job_dir(job["id"]) / "turns"
     turns.mkdir(exist_ok=True)
-    stem = turns / f"{time.strftime('%H%M%S')}-{secrets.token_hex(3)}"  # unique even when turns run at once
-    # Only the shared directory (plan, diffs) is added: the job directory also holds every worktree, and a
-    # worker given it could write into another task's worktree, where no ownership check looks.
-    reply = qk.agent_run(spec, cwd, prompt, write=write, add_dirs=[shared(job), *add_dirs],
-                         events=f"{stem}.events.jsonl")
+    stem = turns / f"{time.strftime('%H%M%S')}-{secrets.token_hex(3)}"
+    entry = {"spec": spec, "write": write, "capability": job.get("current"), "status": "running",
+             "usage": None, "seconds": None, "events": f"{stem}.events.jsonl"}
+    if job.get("delegation") and job.get("_unlocked_turn"):
+        with state.locked(job["id"]) as live:
+            delegation.check(live)
+            if live["delegation"]["sha256"] != job["delegation"]["sha256"]:
+                raise Blocked("delegation changed before the turn started")
+            live.setdefault("usage", []).append(entry.copy())
+            live["tasks"][job["_target"]]["running"]["events"] = entry["events"]
+    job.setdefault("usage", []).append(entry)
+    if job.get("delegation") and not job.get("_unlocked_turn"):
+        state.save(job)  # caller holds the job lock; a killed runner must not silently retry paid work
+    try:
+        reply = qk.agent_run(spec, cwd, prompt, write=write, add_dirs=[shared(job), *add_dirs],
+                             events=entry["events"])
+    except (qk_cli.QkError, OSError) as error:
+        entry["status"] = "failed"
+        raise Blocked(str(error)) from error
     data = reply.data if isinstance(reply.data, dict) else {}
+    entry.update(status=data.get("status") or "failed", usage=data.get("usage"), seconds=data.get("seconds"))
     Path(f"{stem}.out.md").write_text(str(data.get("text") or reply.stderr), encoding="utf-8")
-    job.setdefault("usage", []).append({"spec": spec, "write": write, "capability": job.get("current"),
-                                        "status": data.get("status") or "failed",
-                                        "usage": data.get("usage"), "seconds": data.get("seconds"),
-                                        "events": f"{stem}.events.jsonl"})
     limit = data.get("limit")
-    if isinstance(limit, dict) and limit.get("runtime"):  # qk read the runtime's own usage-limit message
-        job["usage"][-1]["status"] = "limited"
-        # The step starts over after the reset, so edits made before the limit are dropped, but only in a
-        # worktree inside this job's own directory: never the person's checkout or a path that leads elsewhere.
+    if isinstance(limit, dict) and limit.get("runtime"):
+        entry["status"] = "limited"
         if write and Path(cwd).resolve().is_relative_to(state.job_dir(job["id"]).resolve()):
             gitops.discard(cwd)
-        raise Limited(f"{spec} turn stopped at the {limit['runtime']} usage limit: "
+        raise Limited(f"{spec} turn stopped at its usage limit: "
                       f"{data.get('reason') or reply.stderr.strip()[-300:]}",
                       {"runtime": str(limit["runtime"]), "reset_at": limit.get("reset_at") or None})
     if reply.code != 0 or data.get("status") != "done" or not isinstance(data.get("result"), dict):
@@ -231,6 +245,7 @@ lowercase words.
                                    "commit": None, "verify": None, "review": None, "fix_rounds": 0}
                     for task in tasks}
     job["approvals"] = {}
+    delegation.check(job)
     return {"plan": str(path), "tasks": [task["name"] for task in tasks], "summary": result.get("summary", "")}
 
 
@@ -311,6 +326,8 @@ def contract_review(job, qk):
     head = gitops.git(worktree, "rev-parse", "HEAD")
     prompt = f"""Independent read-only review of a test contract. Do not edit files or run commands that write.
 Approved plan: {job['plan']['file']}. Contract files in {worktree}: {', '.join(contract['files'])}.
+Original authorized task: {job['task']}
+Also flag any plan or contract requirement outside that task's scope; do not expand it.
 Check that the tests cover every done criterion in the plan, would fail before the work is done, cannot pass by
 accident (for example empty or always-true assertions), and test behaviour rather than implementation details.
 A test that requires behaviour the plan does not state is important, not a nit: it can fail a correct
@@ -501,6 +518,8 @@ def integrate_run(job, qk):
 
 def pr_open(job, qk):
     worktree = Path(job["integration"]["worktree"])
+    if job.get("delegation"):
+        return publication.open_pr(job, policy.plan_text(job))
     branch = job["integration"]["branch"]
     head = gitops.git(worktree, "rev-parse", "HEAD")
     if head != job["integration"]["commit"]:
@@ -523,6 +542,7 @@ def pr_open(job, qk):
 
 ACTIONS = {"plan.write": plan_write, "contract.write": contract_write, "contract.review": contract_review,
            "build.run": build_run, "verify.run": verify_run, "review.run": review_run,
+           "pr.check": lambda job, qk: publication.check_ci(job),
            "integrate.run": integrate_run, "pr.open": pr_open}
 
 
@@ -539,8 +559,13 @@ def run_unlocked(job_id, capability, qk, target, fix):
             record(job, capability, "refused", str(refused))
             return {"status": "refused", "capability": capability, "reason": str(refused), "next": policy.next_step(job)}
         job["tasks"][target]["running"] = {"capability": capability, "since": now(), "pid": os.getpid()}
+        if job.get("delegation"):
+            spec = policy.step_spec(job, capability, target)
+            job["tasks"][target]["running"]["estimated_usd"] = (
+                0 if spec.split(":", 1)[0] == "codex" else job["delegation"]["turn_estimate_usd"])
         work = copy.deepcopy(job)
         work["current"] = capability
+        work["_budget_reserved"], work["_unlocked_turn"], work["_target"] = True, True, target
     seen = len(work.get("usage", []))
     status, reason, details, limit = "done", "", {}, None
     try:
@@ -548,13 +573,19 @@ def run_unlocked(job_id, capability, qk, target, fix):
     except Limited as error:
         status, reason, limit = "limited", str(error), error.limit
         details = {"limit": limit}
-    except (Blocked, gitops.GitError) as error:
+    except (Blocked, gitops.GitError, delegation.GrantError) as error:
         status, reason = "blocked", str(error)
     finally:
         with state.locked(job_id) as job:
             work["tasks"][target].pop("running", None)
             job["tasks"][target] = work["tasks"][target]
-            job.setdefault("usage", []).extend(work.get("usage", [])[seen:])
+            for entry in work.get("usage", [])[seen:]:
+                existing = next((item for item in job.setdefault("usage", [])
+                                 if item.get("events") == entry["events"]), None)
+                if existing is None:
+                    job["usage"].append(entry)
+                else:
+                    existing.update(entry)
             if limit:
                 hold(job, capability, limit, reason)
             else:
@@ -596,22 +627,31 @@ def run(job_id, capability, qk, target=None, *, expect_red=False, fix=False):
             hold(job, capability, error.limit, str(error))
             return {"status": "limited", "capability": capability, "reason": str(error), "limit": error.limit,
                     "next": policy.next_step(job)}
-        except (Blocked, gitops.GitError) as error:
+        except (Blocked, gitops.GitError, delegation.GrantError, json.JSONDecodeError) as error:
             record(job, capability, "blocked", str(error))
             return {"status": "blocked", "capability": capability, "reason": str(error), "next": policy.next_step(job)}
         record(job, capability, "done")
         return dict(details, status="done", capability=capability, reason="", next=policy.next_step(job))
 
 
-def approve(job_id, stage):
-    """A person's decision, recorded against the plan it was made on."""
+def approve(job_id, stage, *, delegated=False):
+    """A human decision, or a technical stage advanced under an explicit existing grant."""
     with state.locked(job_id) as job:
         try:
+            delegation.check(job)
+            if delegated and not job.get("delegation"):
+                raise policy.Refused("no user delegation authorizes advancing this stage")
             policy.check_approval(job, stage)
-        except policy.Refused as refused:
+        except (policy.Refused, delegation.GrantError) as refused:
             return {"status": "refused", "stage": stage, "reason": str(refused), "next": policy.next_step(job)}
         job["approvals"][stage] = {"at": now(), "plan_sha256": job["plan"]["sha256"]}
+        job["approvals"][stage]["actor"] = "delegated" if delegated else "user"
+        if delegated:
+            job["approvals"][stage]["authority"] = job["delegation"]["sha256"]
         record(job, f"approve {stage}", "done")
+        job["log"][-1]["actor"] = "delegated" if delegated else "user"
+        if delegated:
+            job["log"][-1]["authority"] = job["delegation"]["sha256"]
         return {"status": "done", "stage": stage, "reason": "", "next": policy.next_step(job)}
 
 
