@@ -41,24 +41,22 @@ def run(job_id, qk, max_steps=MAX_STEPS, *, wait_limits=False, deadline=None):
     Running a job retries the runtimes a usage limit stopped. With `wait_limits`, a job stopped by a usage limit
     sleeps until the reset (plus a grace period) and carries on, at most LIMIT_WAITS times and never past
     `deadline` (a local datetime)."""
+    cleared = ledger.recover(job_id)
     with state.locked(job_id) as job:
-        if job.get("delegation"):
-            try:
-                delegation.check(job)
-                if delegation.interrupted(job):
-                    raise delegation.GrantError("a model turn has unresolved cost or may still be running; inspect it")
-            except delegation.GrantError as error:
-                capabilities.record(job, "resume", "blocked", str(error))
-                reply = {"status": "blocked", "stopped": "blocked", "reason": str(error)}
-            else:
-                reply = None
-                if job["pr_url"]:
-                    job["ci"] = None  # an explicit resume rechecks the remote head and CI, not cached success
+        reason = state.recovery_reason(job)
+        try:
+            if reason:
+                raise delegation.GrantError(reason)
+            delegation.check(job)
+        except (delegation.GrantError, gitops.GitError) as error:
+            capabilities.record(job, "resume", "blocked", str(error), error=error)
+            reply = {"status": "blocked", "stopped": "blocked", "reason": str(error)}
         else:
             reply = None
+            if job.get("delegation") and job["pr_url"] and not job.get("ci_check"):
+                job["ci"] = None
     if reply:
         return finish(job_id, qk, reply)
-    cleared = ledger.recover(job_id)
     release(job_id)
     reply = loop(job_id, qk, max_steps)
     for _ in range(LIMIT_WAITS if wait_limits else 0):

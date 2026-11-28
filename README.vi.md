@@ -73,12 +73,12 @@ Qua đêm, `qk-harness run JOB --until 07:00` chờ hạn mức mở lại thay 
 
 ### Một lần cấp quyền ban đầu
 
-Với job tự chạy, `authorize JOB --path ... --budget-usd ... --turn-estimate-usd ... --gh-user ...` cấp rõ scope, soft budget và quyền mở PR của đúng job. Chạy `run JOB` trong Terminal độc lập; runner đi tiếp các cổng dưới actor `delegated`, giữ mọi kiểm tra kỹ thuật và chờ CI của head đã publish. Manual vẫn mặc định; merge luôn do người. Xem [ủy quyền một job](docs/vi/guide.md#ủy-quyền-một-job) để biết lệnh đầy đủ, resume/revoke, unknown cost và giới hạn. Đây không phải hard cap hay OS sandbox.
+Với job tự chạy, `authorize JOB --path ... --budget-usd ... --turn-estimate-usd ... --gh-user ...` cấp rõ scope, soft budget và quyền mở PR draft của đúng job. Chạy `run JOB` trong Terminal độc lập; runner đi tiếp các cổng dưới actor `delegated`, giữ mọi kiểm tra kỹ thuật và chờ CI của head đã publish. Manual vẫn mặc định; merge luôn do người. Xem [ủy quyền một job](docs/vi/guide.md#ủy-quyền-một-job) để biết lệnh đầy đủ, resume/revoke, unknown cost và giới hạn. Đây không phải hard cap hay OS sandbox.
 
 
 ## Trạng thái
 
-Phiên bản 0.1.0. Đã build và test với một qk giả; đã đo với agent thật trên hai bài eval một task của qk ([số đo](docs/vi/measurements.md)). Một job thật có hai task đã đi tới pull request, với một vòng sửa do người cấp thêm.
+Phiên bản 0.1.0. Đã build và test với một qk giả; đã đo với agent thật trên hai bài eval một task của qk ([số đo](docs/vi/measurements.md)). Một job thật có hai task đã tới pull request với một vòng sửa do người cấp thêm; một manual Large có một completion task đã qua đủ bốn cổng người duyệt và tới PR. [Pilot delegated hai task cô lập](evals/reliability-pilot/README.md) đã được chuẩn bị nhưng chưa chạy; chi phí model và remote writes cần quyền riêng. Chưa có bằng chứng failure build cũ chưa rõ nguyên nhân đã được sửa.
 
 ## Test
 
@@ -87,6 +87,8 @@ python3 -m unittest discover -s tests
 ```
 
 Test dùng một qk giả (`tests/fake_qk.py`) và một agent theo kịch bản (`tests/fake_agent.py`); không cần mạng và không chạy agent thật.
+
+Xem [lỗi và bước bị ngắt](docs/vi/guide.md#lỗi-và-bước-bị-ngắt) để tìm failure capsule còn giữ và cấu hình thư mục test artifact tùy chọn.
 
 ## Giấy phép
 

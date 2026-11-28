@@ -178,10 +178,11 @@ class StatusTests(Sandbox):
         self.assertIn('review.run api', self.listing('--line'))
         with state.locked(job_id) as job:
             job['tasks']['api']['running']['pid'] = 99999999
-        self.assertEqual(json.loads(self.listing('--json'))['items'][0]['running'], [])
-        self.assertIn('stopped mid-step · qk-harness run', self.listing('--line'))
-        self.assertEqual(json.loads(self.listing('--json'))['items'][0]['waiting_for'],
-                         {'person': 'task api stopped mid-step'})
+        item = json.loads(self.listing('--json'))['items'][0]
+        self.assertEqual(item['running'], [])
+        self.assertIn('person', item['waiting_for'])
+        self.assertEqual(item['next'].split()[0], 'status')
+        self.assertIn('running', state.load(job_id)['tasks']['api'])
 
     def test_excludes_finished_and_unreadable(self):
         first, second, third = self.new(), self.new(), self.new()

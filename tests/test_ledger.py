@@ -99,14 +99,29 @@ class LedgerTests(Sandbox):
         self.assertEqual(self.run_job(job_id)["stopped"], "done")
         self.assertEqual(self.logged(), [])
 
-    def test_resume_clears_a_task_left_running_by_a_dead_process(self):
+    def test_resume_blocks_a_dead_task_without_terminal_step_evidence(self):
         job_id = self.started()
         self.advance(job_id, until=f"build.run {job_id} api")
         with state.locked(job_id) as job:
             job["tasks"]["api"]["running"] = {"capability": "build.run", "since": "earlier", "pid": 999999}
-        reply = self.run_job(job_id)
-        self.assertEqual((reply["stopped"], reply["recovered"]), ("done", ["api"]))
-        self.assertTrue(any(entry["capability"] == "resume" for entry in state.load(job_id)["log"]))
+        with mock.patch.object(self.qk, "agent_run") as agent:
+            reply = self.run_job(job_id)
+        self.assertEqual(reply["stopped"], "blocked")
+        self.assertIn("inspect", reply["reason"])
+        self.assertIn("running", state.load(job_id)["tasks"]["api"])
+        agent.assert_not_called()
+
+    def test_resume_recovers_a_persisted_completed_step_without_replaying_its_build(self):
+        job_id = self.started()
+        self.advance(job_id, until=f"review.run {job_id} api")
+        with state.locked(job_id) as job:
+            receipt = next(turn for turn in reversed(job["usage"]) if turn["capability"] == "build.run")
+            job["tasks"]["api"]["running"] = {"capability": "build.run", "pid": 999999,
+                                               "events": receipt["events"], "completed": True}
+            commit = job["tasks"]["api"]["commit"]
+        self.assertEqual(ledger.recover(job_id), ["api"])
+        self.assertNotIn("running", state.load(job_id)["tasks"]["api"])
+        self.assertEqual(state.load(job_id)["tasks"]["api"]["commit"], commit)
 
     def test_resume_does_not_build_over_an_unrecorded_commit(self):
         job_id = self.started()

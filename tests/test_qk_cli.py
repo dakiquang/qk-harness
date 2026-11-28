@@ -15,13 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import fake_qk  # noqa: E402
+from failure_capture import FailureCaptureMixin  # noqa: E402
 from harness import qk_cli  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class QkCliTests(unittest.TestCase):
+class QkCliTests(FailureCaptureMixin, unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -196,7 +197,7 @@ class QkCliTests(unittest.TestCase):
         self.assertIn("reports contract 2", refused.stderr)
 
 
-class EntryPointTests(unittest.TestCase):
+class EntryPointTests(FailureCaptureMixin, unittest.TestCase):
     setUp, write_lock = QkCliTests.setUp, QkCliTests.write_lock  # the same stand-in qk, without its tests
 
     def test_the_qk_harness_command_works_through_a_symlink(self):

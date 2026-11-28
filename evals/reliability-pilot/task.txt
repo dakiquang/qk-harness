@@ -1,0 +1,65 @@
+Implement the isolated reliability pilot, not a production feature.
+
+PREPARATION REQUIRED BEFORE AUTHORIZATION: the executor must replace every
+__FROZEN_ORACLE_CHECK_PY__ below with the absolute path to check.py in the
+read-only frozen runner H checkout, verify its recorded SHA-256, and save the
+rendered task outside the target checkout. No unresolved placeholders may be
+submitted to start/authorize. These are preparation placeholders, NOT permission
+to discover another checker, bypass a verify, or add a runtime fallback.
+
+Deliver exactly two independently buildable tasks:
+- csv owns only evals/reliability-pilot/solution/csv_export.py
+- json owns only evals/reliability-pilot/solution/json_export.py
+Each module exposes render(records) -> str. records is a list of dictionaries
+with exactly name and note keys, both strings. Do not mutate the list or any
+record. Invalid-input handling is outside this specification.
+
+CSV: the first row is the name,note header in that order. Reading with the
+standard-library csv.reader must recover that header and every name/note value
+in the input record order, including an empty list (header only), empty strings,
+Unicode, commas, quotes, CR and LF within fields. No extra rows or columns.
+JSON: json.loads of the returned string must recover the exact input list,
+values and record order, including [] and all the same string cases. JSON
+whitespace/pretty printing and Unicode escaping are not prescribed.
+
+Use Python 3.9+ and the standard library only. There are deliberately no seed
+solutions. Do not change other product code, CLI, dependencies, CI, this spec,
+README, the frozen oracle, or evals/reliability-pilot/workflow.yml. Do not call a
+model, network, GitHub or AWS from the solutions or tests. No embedded oracle
+answers, environment-based shortcuts or weakening checks to make red green.
+
+PLANNER REQUIREMENTS (read-only planning):
+- Produce exactly the two tasks above, with disjoint file ownership and no model
+  overrides outside the authorized implementation/review pair.
+- Keep generated contract tests solely under
+  evals/reliability-pilot/generated-contract/; list that directory as contract
+  ownership, not as either worker's ownership. Contract tests must exercise the
+  specified behavior and initially fail because the implementations are missing,
+  not because setup/import/test discovery is broken. They must have a main guard
+  when executable and be safe to import under multiprocessing spawn.
+- Task verifies must run ONLY their own frozen-oracle task, never the other
+  module or the integrated contract suite. Workers cannot edit contract tests,
+  oracle, workflow or verification commands.
+- Integrated qk-verify must run BOTH the generated contract suite and frozen
+  oracle --task all. Neither command is optional. Do not add skipped tests,
+  accept-contract, extra reviews, extra fix grants or a success fallback.
+- Keep contract and per-task review enabled and default parallelism (two workers).
+  Large adds delegated gate receipts, not additional model review turns.
+
+Use these exact ownership/verification contracts after placeholder rendering:
+
+```qk-harness
+{"contract":["evals/reliability-pilot/generated-contract/"],"tasks":[{"name":"csv","owns":["evals/reliability-pilot/solution/csv_export.py"],"verify":["python3 \"__FROZEN_ORACLE_CHECK_PY__\" --repo . --task csv"]},{"name":"json","owns":["evals/reliability-pilot/solution/json_export.py"],"verify":["python3 \"__FROZEN_ORACLE_CHECK_PY__\" --repo . --task json"]}]}
+```
+
+```qk-verify
+python3 -m unittest discover -s evals/reliability-pilot/generated-contract -p 'test_*.py' -v
+python3 "__FROZEN_ORACLE_CHECK_PY__" --repo . --task all
+```
+
+Acceptance requires both task verifies/reviews at their recorded commits, the
+merged integrated contract plus all-oracle check, four delegated receipts
+(plan, contract, build, integrate) bound to the same grant, one draft PR and the
+actual reliability-pilot grader SUCCESS on its exact head against frozen base
+E, alongside existing product CI. The executor, not a worker shortcut, gathers
+those live receipts and frozen-oracle digests. No merge/release is authorized.

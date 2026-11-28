@@ -55,8 +55,12 @@ The same two-task work (three small fixes in `harness/evaluate.py`; review findi
 - One `--no-contract` run of `csv-export` stopped at planning: the planner read "each task writes its tests" as a request to write files in its read-only turn. A rerun passed; treated as noise.
 - A turn stopped with SIGTERM was ended cleanly by `qk agent run`: no agent process and no scratch directory were left.
 
+## Manual Large evidence
+
+A later manual Large job with one completion task passed all four human gates and reached [WAF PR #11](https://github.com/dakiquang/waf-upgrade-check/pull/11). This corrects the earlier observation that Large had only stopped before the contract gate. It proves that manual path for that job, not delegated operation or two-task parallel execution; the measurements and defaults above are unchanged.
+
 ## Not measured yet
 
-- A Large job through all four gates: the one attempt stopped before the contract gate (see the guide's Limits).
+- A real-agent delegated Large job with two parallel tasks. The [isolated pilot fixture](../../evals/reliability-pilot/README.md) is prepared; its live run is still pending separate freeze, spending and publication approvals. No pilot result or historical build-failure root cause is claimed.
 - Per-task review on work with several tasks.
 - Reviewer strictness on qk's three `runner-review` cases.

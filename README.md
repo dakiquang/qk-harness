@@ -73,12 +73,12 @@ Overnight, `qk-harness run JOB --until 07:00` waits out a usage limit instead of
 
 ### One upfront authorization
 
-For an unattended job, `authorize JOB --path ... --budget-usd ... --turn-estimate-usd ... --gh-user ...` explicitly grants scope, a soft budget and publication of that job's PR. Run `run JOB` in an independent Terminal; it advances stages as `delegated`, retains every technical check, and waits for CI on the published head. Manual stays the default; merge always belongs to a person. See [delegating one job](docs/en/guide.md#delegating-one-job) for the complete command, resume/revoke behavior, unknown costs and limits. This is not a hard cap or an OS sandbox.
+For an unattended job, `authorize JOB --path ... --budget-usd ... --turn-estimate-usd ... --gh-user ...` explicitly grants scope, a soft budget and publication of that job's draft PR. Run `run JOB` in an independent Terminal; it advances stages as `delegated`, retains every technical check, and waits for CI on the published head. Manual stays the default; merge always belongs to a person. See [delegating one job](docs/en/guide.md#delegating-one-job) for the complete command, resume/revoke behavior, unknown costs and limits. This is not a hard cap or an OS sandbox.
 
 
 ## Status
 
-Version 0.1.0. Built and tested against a stand-in qk; measured with real agents on two of qk's single-task eval cases ([measurements](docs/en/measurements.md)). One real job with two tasks has reached its pull request, with a person granting one extra fix round.
+Version 0.1.0. Built and tested against a stand-in qk; measured with real agents on two of qk's single-task eval cases ([measurements](docs/en/measurements.md)). One real job with two tasks reached its pull request with a person granting one extra fix round; a manual Large job with one completion task passed all four human gates and reached its PR. The [isolated two-task delegated pilot](evals/reliability-pilot/README.md) is prepared but has not run; model spending and remote writes need separate approval. This is not evidence that the earlier unexplained build failure is fixed.
 
 ## Test
 
@@ -87,6 +87,8 @@ python3 -m unittest discover -s tests
 ```
 
 The tests use a stand-in qk (`tests/fake_qk.py`) and a scripted agent (`tests/fake_agent.py`); they need no network and run no real agent.
+
+For retained failure capsules and the optional test artifact directory, see [failures and interrupted steps](docs/en/guide.md#failures-and-interrupted-steps).
 
 ## License
 

@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import fake_qk  # noqa: E402
+from failure_capture import FailureCaptureMixin  # noqa: E402
 from harness import __main__ as cli, capabilities, coordinator, gitops, policy, qk_cli, state  # noqa: E402
 
 
@@ -35,7 +36,7 @@ def sh(cwd, *args):
     return subprocess.run(list(args), cwd=str(cwd), check=True, capture_output=True, text=True).stdout.strip()
 
 
-class Sandbox(unittest.TestCase):
+class Sandbox(FailureCaptureMixin, unittest.TestCase):
     """A sample project with a bare remote, a stand-in qk and gh, and helpers; no tests of its own."""
 
     def setUp(self):
@@ -69,10 +70,18 @@ class Sandbox(unittest.TestCase):
         self.qk = qk_cli.open_locked(self.lock)
 
     def new(self, size="medium"):
-        return state.new_job(self.repo, "Add a greeting API and CLI", size, "main", "codex:", "claude:")["id"]
+        job_id = state.new_job(self.repo, "Add a greeting API and CLI", size, "main", "codex:", "claude:")["id"]
+        self._diagnostic_context = {"job": job_id}
+        return job_id
 
     def run_cap(self, job_id, capability, target=None, **flags):
-        return capabilities.run(job_id, capability, self.qk, target, **flags)
+        self._diagnostic_context = {"job": job_id, "capability": capability, "target": target}
+        reply = capabilities.run(job_id, capability, self.qk, target, **flags)
+        self._diagnostic_context.update({key: reply[key] for key in
+                                         ("reason", "operation", "returncode", "signal", "timed_out", "cleanup",
+                                          "head", "authority_hash", "evidence", "artifacts", "stdout", "stderr")
+                                         if key in reply})
+        return reply
 
     def advance(self, job_id, until=None, agent=""):
         """Run `next` until a person must act, `until` matches, or the job is done; return the last reply."""
